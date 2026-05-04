@@ -1,0 +1,27 @@
+{
+  "name": "streamlockfun-minigame",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reference mini-game built on the Streamlock Operator SDK. Consumes @streamlock/operator-sdk only — no internal Streamlock imports — to demonstrate that the SDK is a real third-party integration boundary.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "match": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p .",
+    "start": "node dist/main.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@streamlock/operator-sdk": "file:../streamlockfun/packages/operator-sdk",
+    "@solana/web3.js": "^1.95.0",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0"
+  }
+}
