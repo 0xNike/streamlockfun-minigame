@@ -1,6 +1,7 @@
 import { StreamlockOperator, type Chain } from "@streamlock/operator-sdk";
 import { Keypair } from "@solana/web3.js";
-import "dotenv/config";
+import { config } from "dotenv";
+config({ path: ".env.local" });
 
 function required(name: string): string {
   const v = process.env[name];

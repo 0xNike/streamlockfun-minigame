@@ -17,3 +17,13 @@ dist/
 
 # OS
 Thumbs.db
+operator.json
+
+# SQLite (operator session DB)
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# TypeScript incremental build cache
+*.tsbuildinfo

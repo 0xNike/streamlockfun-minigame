@@ -17,24 +17,10 @@
 import type { DeltaEntry } from "@streamlock/operator-sdk";
 import { op, GAME_TOKEN_MINT, OPERATOR_PUBKEY } from "./operator.js";
 import { playBestOfThree } from "./game.js";
+import { findPairing, type Player } from "./matchmaker.js";
 
 const STAKE_BPS = 1000;            // 10% of a stream's ledger per loss
-const DISPUTE_WINDOW_SEC = 60;     // 60s for casual games; longer for high-stakes
-
-type Player = { holder: string; streamId: string };
-
-async function findMatch(): Promise<[Player, Player] | null> {
-  const { streams } = await op.tokens.streams(GAME_TOKEN_MINT);
-  const eligible = streams.filter((s: any) => !s.settled && !s.closed);
-  if (eligible.length < 2) {
-    console.log(`[match] only ${eligible.length} eligible stream(s) on ${GAME_TOKEN_MINT.slice(0, 8)}…`);
-    return null;
-  }
-  return [
-    { holder: eligible[0].holder, streamId: eligible[0].streamId },
-    { holder: eligible[1].holder, streamId: eligible[1].streamId },
-  ];
-}
+const DISPUTE_WINDOW_SEC = 120;    // 60s for casual games; longer for high-stakes (devnet clock skew → 120s)
 
 async function startSession(p1: Player, p2: Player) {
   console.log("[match] creating session…");
@@ -44,7 +30,7 @@ async function startSession(p1: Player, p2: Player) {
       { wallet: p1.holder, streamId: p1.streamId },
       { wallet: p2.holder, streamId: p2.streamId },
     ],
-    endTs: Math.floor(Date.now() / 1000) + 600,
+    endTs: Math.floor(Date.now() / 1000) + 5,
     disputeWindowSec: DISPUTE_WINDOW_SEC,
   });
   console.log(`[match]   pda=${session.result.gameSessionPda}`);
@@ -75,7 +61,7 @@ async function settleMatch(sessionPda: string, p1: Player, p2: Player) {
   await op.sessions.submit(sessionPda, { startChunkIndex: 0, deltas });
 
   console.log(`[match] waiting ${DISPUTE_WINDOW_SEC}s dispute window…`);
-  await new Promise((r) => setTimeout(r, (DISPUTE_WINDOW_SEC + 5) * 1000));
+  await new Promise((r) => setTimeout(r, (DISPUTE_WINDOW_SEC + 30) * 1000));
 
   console.log("[match] finalizing + applying deltas…");
   const out = await op.sessions.finalizeAndApplyAll(sessionPda, [{ chunkIndex: 0, deltas }]);
@@ -87,14 +73,14 @@ async function main() {
   console.log(`[match] operator: ${OPERATOR_PUBKEY}`);
   console.log(`[match] sdk config: ${JSON.stringify(op.describe())}`);
 
-  const match = await findMatch();
-  if (!match) {
-    console.log("[match] no players — exiting");
+  const pairing = await findPairing(STAKE_BPS);
+  if (!pairing.ok) {
+    console.log(`[match] only ${pairing.eligibleCount} of ${pairing.totalStreams} stream(s) eligible (need ≥${STAKE_BPS} bps + wagerable) — exiting`);
     process.exit(1);
   }
 
-  const [p1, p2] = match;
-  console.log(`[match] paired ${p1.holder.slice(0, 8)}… vs ${p2.holder.slice(0, 8)}…`);
+  const { p1, p2 } = pairing;
+  console.log(`[match] paired ${p1.holder.slice(0, 8)}… (${p1.bps} bps) vs ${p2.holder.slice(0, 8)}… (${p2.bps} bps)`);
 
   const sessionPda = await startSession(p1, p2);
   await settleMatch(sessionPda, p1, p2);

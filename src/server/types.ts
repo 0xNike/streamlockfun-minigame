@@ -1,0 +1,251 @@
+/**
+ * Shared types for the operator server.
+ *
+ * These define the wire contract between the frontend and this server. Changes
+ * here are breaking changes for the frontend; bump a contract version when
+ * altering anything on a public path.
+ */
+
+import { z } from "zod";
+
+// ───────── Match state machine ─────────
+
+export const MATCH_STATES = [
+  "queued",
+  "partnered",
+  "creating",
+  "active",
+  "complete",
+  "submitting",
+  "dispute_wait",
+  "finalizing",
+  "applying",
+  "done",
+  "cancelling",
+  "cancelled",
+  "failed",
+] as const;
+export type MatchState = (typeof MATCH_STATES)[number];
+
+export const TERMINAL_STATES: ReadonlySet<MatchState> = new Set([
+  "done",
+  "cancelled",
+  "failed",
+]);
+
+// ───────── Game primitives ─────────
+
+export const MOVES = ["rock", "paper", "scissors"] as const;
+export type Move = (typeof MOVES)[number];
+
+export type Side = "a" | "b";
+
+export type RoundResult = {
+  round: number;
+  a: Move | null; // null when that side forfeited the round
+  b: Move | null;
+  winner: Side | "tie";
+  forfeitedBy?: Side | "both";
+};
+
+export type TxKind = "create" | "submit" | "finalize" | "apply" | "cancel";
+
+// ───────── Session shape mirroring streamlockfun backend ─────────
+// Local mirror until @streamlock/operator-sdk exports a typed SessionState.
+// Swap to SDK type when v0.1.2 lands; keep the field set aligned.
+
+export type SessionState = {
+  sessionPda: string;
+  tokenMint: string;
+  operator: string;
+  participants: { wallet: string; streamId: string }[];
+  endTs: number;
+  disputeWindowSec: number;
+  disputeWindowEndTs: number;
+  status: "open" | "finalized" | "cancelled" | "disputed" | string;
+  totalChunks: number;
+  appliedChunks: number[];
+  totalDeltas: number;
+  disputeCount: number;
+  finalizedAt: string | null;
+  createdAt: string;
+};
+
+// ───────── HTTP API ─────────
+
+export const CreateMatchBody = z.object({
+  wallet: z.string().min(32).max(64),
+  streamId: z.string().min(32).max(64),
+  tokenMint: z.string().min(32).max(64).optional(),
+  bpsAtStake: z.number().int().positive().max(10000).optional(),
+});
+export type CreateMatchBody = z.infer<typeof CreateMatchBody>;
+
+export type CreateMatchResponse = {
+  matchId: string;
+  matchUrl: string; // public-facing, frontend renders /match/<id>
+  wsUrl: string; // ws://… already includes ?as=a
+};
+
+export const JoinMatchBody = z.object({
+  wallet: z.string().min(32).max(64),
+  streamId: z.string().min(32).max(64),
+});
+export type JoinMatchBody = z.infer<typeof JoinMatchBody>;
+
+export type JoinMatchResponse = {
+  matchId: string;
+  wsUrl: string; // includes ?as=b
+};
+
+export type PlayerSlotSnapshot = {
+  wallet: string;
+  streamId: string;
+  connected: boolean;
+  effectiveBps: number | null;
+  entitledLamports: string | null;
+  /** Raw u64 base units locked in this stream (BigInt-safe decimal string).
+   *  Multiply by stakeBps/10000 for the wager in token units. Null on legacy. */
+  lockedTokenAmount: string | null;
+};
+
+export type TokenMetaPublic = {
+  mint: string;
+  name: string | null;
+  symbol: string | null;
+  decimals: number | null;
+  imageUri: string | null;
+};
+
+export type MatchSnapshot = {
+  matchId: string;
+  state: MatchState;
+  pda: string | null;
+  tokenMint: string;
+  tokenMeta: TokenMetaPublic | null;
+  playerA: PlayerSlotSnapshot;
+  playerB: PlayerSlotSnapshot | null;
+  roundIndex: number;
+  rounds: RoundResult[];
+  winner: Side | "tie" | null;
+  endTs: number | null;
+  disputeWindowSec: number;
+  finalizeEligibleAt: number | null;
+  bpsAtStake: number;
+  signatures: { kind: TxKind; sig: string }[];
+  failedReason: string | null;
+};
+
+// ───────── WSS — server-to-client frames ─────────
+
+export type ServerFrame =
+  | { type: "hello"; ts: number; matchId: string; you: Side; snapshot: MatchSnapshot }
+  | { type: "state"; ts: number; state: MatchState; reason: string }
+  | { type: "peer_status"; ts: number; peer: Side; connected: boolean; graceUntil?: number }
+  | { type: "round_start"; ts: number; round: number; deadline: number }
+  | {
+      // Both commits in. Reveal phase open until `deadline`. Commit hashes are
+      // forwarded so each client (and any auditor) can later verify the eventual
+      // reveal matches what the player committed to.
+      type: "commits_locked";
+      ts: number;
+      round: number;
+      deadline: number;
+      commits: { a: string; b: string };
+    }
+  | {
+      // yourMove / theirMove are null when that side never validly revealed
+      // (commit-phase forfeit, reveal timeout, or BAD_REVEAL).
+      type: "round_result";
+      ts: number;
+      round: number;
+      yourMove: Move | null;
+      theirMove: Move | null;
+      winner: Side | "tie";
+      forfeitedBy?: Side | "both";
+    }
+  | { type: "match_result"; ts: number; winner: Side | "tie"; rounds: RoundResult[] }
+  | {
+      type: "tx";
+      ts: number;
+      kind: TxKind;
+      attempt: number;
+      status: "pending" | "confirmed" | "failed";
+      sig?: string;
+      error?: string;
+    }
+  | {
+      type: "done";
+      ts: number;
+      winner: Side;
+      finalSignatures: { kind: TxKind; sig: string }[];
+      explorerLinks: string[];
+    }
+  | {
+      type: "cancelled";
+      ts: number;
+      reason: "tie" | "abandon" | "stream_busy" | "operator_decision";
+      refundSig?: string;
+    }
+  | { type: "failed"; ts: number; reason: string; contact: string }
+  | { type: "error"; ts: number; code: ErrorCode; message: string; fatal: boolean }
+  | { type: "ping"; ts: number };
+
+// ───────── WSS — client-to-server frames ─────────
+
+// Commit-reveal protocol (per round):
+//   1. client → server: `commit { commitHash }` where commitHash = sha256(move + ":" + nonce).
+//   2. server → both clients: `commits_locked` once both commits are in.
+//   3. client → server: `reveal { move, nonce }`.
+//   4. server verifies sha256(move+":"+nonce) === commitHash, then judges the round.
+// commitHash is 64 lowercase hex chars; nonce is 32 lowercase hex chars (16 random bytes).
+const HEX_RE = /^[0-9a-f]+$/;
+const CommitHashSchema = z.string().length(64).regex(HEX_RE, "commitHash must be 64 lowercase hex chars");
+const NonceSchema = z.string().length(32).regex(HEX_RE, "nonce must be 32 lowercase hex chars");
+
+export const ClientFrame = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("commit"),
+    round: z.number().int().nonnegative(),
+    commitHash: CommitHashSchema,
+  }),
+  z.object({
+    type: z.literal("reveal"),
+    round: z.number().int().nonnegative(),
+    move: z.enum(MOVES),
+    nonce: NonceSchema,
+  }),
+  z.object({ type: z.literal("forfeit_round"), round: z.number().int().nonnegative() }),
+  z.object({ type: z.literal("request_resync") }),
+  z.object({ type: z.literal("pong") }),
+  z.object({ type: z.literal("leave") }),
+]);
+export type ClientFrame = z.infer<typeof ClientFrame>;
+
+// ───────── Errors ─────────
+
+export const ERROR_CODES = [
+  "INVALID_STREAM",
+  "STREAM_BUSY",
+  "MATCH_NOT_FOUND",
+  "MATCH_FULL",
+  "SLOT_TAKEN",
+  "BAD_FRAME",
+  "OUT_OF_ORDER_MOVE",
+  "BAD_REVEAL",
+  "LATE_COMMIT",
+  "LATE_REVEAL",
+  "RPC_DEGRADED",
+  "INTERNAL",
+] as const;
+export type ErrorCode = (typeof ERROR_CODES)[number];
+
+export class ServerError extends Error {
+  constructor(
+    public code: ErrorCode,
+    message: string,
+    public fatal = true,
+  ) {
+    super(message);
+  }
+}
