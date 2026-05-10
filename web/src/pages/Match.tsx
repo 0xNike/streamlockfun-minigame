@@ -52,6 +52,10 @@ export function Match() {
   const [txEvents, setTxEvents] = useState<TxEvent[]>([]);
   const [roundDeadline, setRoundDeadline] = useState<number | null>(null);
   const [committedRound, setCommittedRound] = useState<number | null>(null);
+  // Per-round outcome flash. Set when a round_result arrives where this client
+  // won or lost (skipped on ties). Keyed by round so back-to-back results each
+  // restart the animation; cleared on unmount of the round transition.
+  const [flash, setFlash] = useState<{ kind: "win" | "loss"; key: number } | null>(null);
   const wsRef = useRef<WsClient | null>(null);
   // Per-round secret store for the commit-reveal flow. Lives only in this
   // tab's memory — a hard refresh between commit and reveal is treated as a
@@ -186,6 +190,14 @@ export function Match() {
           };
           return { ...s, rounds: [...s.rounds, r] };
         });
+        // Quick green/red flash. Ties get nothing — they're common in RPS and
+        // a neutral flash would just be noise.
+        if (youSide && frame.winner !== "tie") {
+          setFlash({
+            kind: frame.winner === youSide ? "win" : "loss",
+            key: frame.round,
+          });
+        }
         // Round secret is no longer needed once the round has resolved.
         secretsRef.current.delete(frame.round);
         break;
@@ -351,6 +363,14 @@ export function Match() {
 
   return (
     <div className="match">
+      {flash && (
+        <div
+          key={flash.key}
+          className={`round-flash round-flash--${flash.kind}`}
+          aria-hidden="true"
+          onAnimationEnd={() => setFlash(null)}
+        />
+      )}
       <MatchHeader snap={snap} you={you} matchId={matchId} shareUrl={shareUrl} />
 
       <Wager

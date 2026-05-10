@@ -603,6 +603,32 @@ button.link:hover:not(:disabled) {
   pointer-events: none;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Round-outcome flash. Brief radial tint from the screen edges so the player's
+ * eye is drawn outward to read the round result, without occluding the cards.
+ * Pointer events disabled — purely cosmetic. Skipped on ties. */
+.round-flash {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+  opacity: 0;
+  animation: round-flash-fade 480ms ease-out forwards;
+}
+.round-flash--win {
+  background: radial-gradient(ellipse at center, transparent 40%, rgba(34, 197, 94, 0.45) 100%);
+}
+.round-flash--loss {
+  background: radial-gradient(ellipse at center, transparent 40%, rgba(239, 68, 68, 0.45) 100%);
+}
+@keyframes round-flash-fade {
+  0%   { opacity: 0; }
+  25%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .round-flash { animation: none; opacity: 0; }
+}
 .settle__step-label { font-size: 11px; color: var(--dim); line-height: 1.3; font-family: var(--font-display); font-weight: 500; }
 .settle__step.done .settle__step-label,
 .settle__step.active .settle__step-label { color: var(--text); }
