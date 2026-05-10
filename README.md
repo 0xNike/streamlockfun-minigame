@@ -2,36 +2,42 @@
 
 Reference mini-game built on [`@streamlock/operator-sdk`](https://github.com/0xNike/streamlockfun/tree/main/packages/operator-sdk).
 
-This repo exists to be the receipt that the Streamlock Operator SDK is a real third-party integration boundary: it consumes only `@streamlock/operator-sdk` and `@solana/web3.js`. **Zero imports from the streamlockfun monorepo.** If you can build a game with this, you can build one without ever touching Streamlock's internals.
+This repo is the receipt that the Streamlock Operator SDK is a real third-party integration boundary: it consumes only `@streamlock/operator-sdk` and `@solana/web3.js`. **Zero imports from the streamlockfun monorepo.** If you can build a game with this, you can build one without ever touching Streamlock's internals.
 
-The current game is best-of-three Rock-Paper-Scissors, played off-chain in `src/game.ts`. Replace it with whatever your actual game is.
+The game is best-of-three Rock-Paper-Scissors with commit-reveal, World ID sybil gating, and amount-based wagering. Live at [streamlockfun-minigame.vercel.app](https://streamlockfun-minigame.vercel.app) (frontend) talking to [streamlockfun-minigame.fly.dev](https://streamlockfun-minigame.fly.dev) (operator).
 
 ---
 
 ## Architecture
 
 ```
-[matchmaker]  →  [src/main.ts]  →  [@streamlock/operator-sdk]  →  /v1/operator/*
-                       ↓                                              ↓
-                  [src/game.ts]                                 Solana mainnet
-                  (off-chain RPS)                              (entitlement ledger)
+                   ┌──────────────────────────┐
+   Browser ──WSS── │  src/server/  (Fastify)  │ ──── @streamlock/operator-sdk ───▶ /v1/operator/*
+   (web/, React)   │  - matches.ts  state mc  │                                          │
+                   │  - rps.ts      commit-rev│                                          ▼
+                   │  - settlement  retry/log │                                  Solana mainnet
+                   │  - reconciler  crash rec │                                  (entitlement ledger)
+                   │  - SQLite (better-sqlite3)│
+                   └──────────────────────────┘
 ```
 
-`src/operator.ts` constructs the `StreamlockOperator` client from env vars.
-`src/game.ts` is pure off-chain game logic — no Streamlock awareness.
-`src/main.ts` orchestrates a single match end-to-end (discover → session → play → submit → finalize).
+**Two entry points:**
 
-A production version would live behind an HTTP + WSS server, persist session state in its own DB, run matchmaking, and subscribe to `op.stream.on("stream.unlocked", ...)` for proactive settlement. None of that is here yet — this is the smallest thing that proves the boundary holds.
+- `src/main.ts` (`npm run match`) — single-match demo orchestrator. Discovers two streams, runs RPS in `src/game.ts`, settles. Useful as a smoke test and as a 200-line proof of the SDK boundary.
+- `src/server/` (`npm run server` / `npm start`) — production operator: Fastify HTTP + WSS, SQLite-backed match registry, commit-reveal RPS, settlement state machine with retries, crash reconciler, World ID gate. This is what runs on Fly.
+
+**Web frontend** lives in `web/` (React + Vite, Solana wallet adapter, World ID IDKit). On Vercel it ships as a static SPA; `/api/*` rewrites to the Fly operator (see `vercel.json`).
 
 ## Setup
 
 ### 1. Install
 
 ```bash
-npm install
+npm install        # operator (root)
+cd web && npm install && cd ..   # web client
 ```
 
-The SDK is currently consumed via `file:../streamlockfun/packages/operator-sdk`. Once `@streamlock/operator-sdk` is published to npm, swap that line in `package.json` for the registry version.
+`@streamlock/operator-sdk` is consumed via the bundled tarball at `vendor/streamlock-operator-sdk-0.1.4.tgz`. A `postinstall` script (`scripts/patch-sdk.mjs`) applies in-tree patches — no manual step required.
 
 ### 2. Get an operator API key
 
@@ -45,53 +51,57 @@ SOLANA_KEYPAIR_B64=$(cat ./operator.json | python3 -c 'import json,sys,base64; p
 echo "OPERATOR_SECRET_KEY_B64=$SOLANA_KEYPAIR_B64"
 ```
 
-Fund it with ~0.5 SOL working balance (per-match cost ~0.05 SOL, mostly refundable PDA rent).
+Fund it with ~0.5 SOL working balance. Per-match rent is ~0.05 SOL across two PDAs (session + results); rent is reclaimed when `finalizeAndApply` or `cancel` closes them, so steady-state cost is dominated by transaction fees. Lamports are *float* during a match's dispute window — size the balance for your peak concurrent matches, not your lifetime volume.
 
 > Keep `operator.json` outside this repo's tree, or `.gitignore` it explicitly. **Never commit a keypair.**
 
 ### 4. Configure env
 
 ```bash
-cp .env.example .env
-# fill in STREAMLOCK_OPERATOR_KEY, OPERATOR_SECRET_KEY_B64, GAME_TOKEN_MINT
+cp .env.example .env.local
+# fill in STREAMLOCK_OPERATOR_KEY, OPERATOR_SECRET_KEY_B64, GAME_TOKEN_MINT,
+# WORLD_* (optional, only if running verified-only matches)
 ```
 
-For the first run, point `STREAMLOCK_CHAIN=soldev` and a devnet token mint that already has ≥2 streams.
+`STREAMLOCK_CHAIN` accepts `soldev` (devnet) or `sol` (mainnet). For the first run, point at devnet with a token mint that already has ≥2 streams.
 
-### 5. Run a match
+### 5. Run the single-match demo
 
 ```bash
 npm run match
 ```
 
-You should see:
-```
-[match] operator: <pubkey>
-[match] sdk config: {"apiKey":"sk_AbCdEfG…","chain":"soldev",…}
-[match] paired <holder1>… vs <holder2>…
-[match] creating session…
-[match]   pda=<sessionPda>
-[match]   sig=<txSig>
-[match] off-chain: 3-round match → winner=p2
-[match]   r vs p=p2  s vs r=p1  p vs r=p1  …
-[match] submitting deltas (loser <…>… -1000, winner <…>… +1000)
-[match] waiting 60s dispute window…
-[match] finalizing + applying deltas…
-[match]   finalize sigs: <sig>
-[match]   apply sigs:    <sig>,<sig>
-[match] ✅ done
+Picks the first two streams on `GAME_TOKEN_MINT`, plays one off-chain best-of-three, and settles on-chain. Verify on `https://www.streamlock.fun/<chain>/<mint>` — the loser's stream rows should shift by ±1000 bps.
+
+### 6. Run the full operator + web app locally
+
+```bash
+# terminal 1 — operator (Fastify on :8787)
+npm run server
+
+# terminal 2 — web client (Vite on :5173, proxies /api to :8787)
+cd web && npm run dev
 ```
 
-Verify the bps shift: open `https://www.streamlock.fun/<chain>/<mint>` and confirm the holder rows for the loser's stream changed by ±1000 bps.
+Open http://localhost:5173. Wallet-connect, create a match, share the URL with a second wallet to join. The match plays in-browser via WSS to the operator.
 
 ## Going to mainnet
 
-Once a devnet match runs end-to-end:
+After a devnet match runs end-to-end:
 
-1. Set `STREAMLOCK_CHAIN=mainnet` and `SOLANA_RPC_URL=<paid mainnet RPC>` in `.env`.
+1. Set `STREAMLOCK_CHAIN=sol` and `SOLANA_RPC_URL=<paid mainnet RPC>` in your env.
 2. Set `GAME_TOKEN_MINT=<your mainnet token mint>`.
-3. Top up the operator wallet to ~0.5 SOL on mainnet.
-4. Run `npm run match` once with low stakes (start at `STAKE_BPS=100` not 1000) and verify on-chain.
+3. Top up the operator wallet to **at least 0.5 SOL** on mainnet. The wallet pays rent for every concurrent in-flight match; under-funding it surfaces as `Transaction simulation failed: Attempt to debit an account but found no record of a prior credit` (cold wallet) or `insufficient lamports` (running low).
+4. Run a single low-stakes match first and confirm the on-chain ledger shift before opening it up.
+
+## Deployment
+
+- **Operator → Fly.io.** `fly.toml` configures a single always-on machine in `iad` with a persistent volume for the SQLite DB. Match registry and settlement timers are in-process — **do not scale horizontally** without first moving state to Redis/Postgres. Set runtime secrets with `fly secrets set STREAMLOCK_OPERATOR_KEY=… OPERATOR_SECRET_KEY_B64=… …`.
+- **Web → Vercel.** `vercel.json` builds `web/`, serves the SPA, and rewrites `/api/*` to the Fly operator. Set `PUBLIC_FRONTEND_ORIGIN=<vercel-url>` on the Fly side so the operator emits the right CORS headers and `SameSite=None` World ID cookies.
+
+## World ID (optional)
+
+When `verifiedOnly: true` is passed at match-create, joiners must present a valid `wid_session` cookie matching their wallet. Provision the World ID app via the `worldcoin-developer-portal` MCP — it returns the signing key once; store it as `WORLD_SIGNING_KEY`. Set `WORLD_ENVIRONMENT=staging` for the simulator, `production` for the real World App.
 
 ## Reference
 
