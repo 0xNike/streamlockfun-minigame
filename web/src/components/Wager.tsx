@@ -44,7 +44,6 @@ export function Wager({
 }) {
   const pct = (stakeBps / 100).toFixed(2);
   const explorerUrl = `https://app.streamlock.fun/${tokenEnv}/${tokenMint}`;
-  const cluster = tokenEnv === "sol" ? "mainnet" : "devnet";
   const label = tokenLabel(tokenMeta, tokenMint);
 
   const wagerTokens = wager
@@ -86,7 +85,6 @@ export function Wager({
                 <strong>{label}</strong>
               </a>
               <span className="dim small"> · {shortMint(tokenMint)} ↗</span>
-              <span className="dim small"> ({cluster})</span>
             </td>
           </tr>
           <tr>

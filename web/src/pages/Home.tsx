@@ -86,8 +86,21 @@ export function Home() {
   const ready = !!wallet && !!cfg && !!picked && wagerOk && worldIdOk;
   const worldIdEnabled = cfg?.worldId.enabled === true;
 
+  const stakePct = ((cfg?.stakeBps ?? 1000) / 100).toFixed(0);
+
   return (
     <>
+      <section className="intro" aria-labelledby="intro-title">
+        <div className="intro__moves" aria-hidden="true">
+          <span>✊</span>
+          <span>✋</span>
+          <span>✌️</span>
+        </div>
+        <h1 id="intro-title" className="intro__title">Rock Paper Scissors</h1>
+        <p className="intro__sub">
+          Best of 3. Stake <strong>{stakePct}%</strong> of the loser's stream — winner takes the share.
+        </p>
+      </section>
       {cfg && (
         <Wager
           tokenMint={cfg.tokenMint}

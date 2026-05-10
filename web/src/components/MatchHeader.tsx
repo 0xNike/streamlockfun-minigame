@@ -16,6 +16,30 @@ const STATE_LABEL: Record<string, string> = {
   failed: "failed",
 };
 
+// Visual phase grouping → state-pill modifier class. Players don't care about
+// the difference between "submitting" and "applying" — they care that the
+// match is running, settling, done, or in trouble.
+function phaseModifier(state: string): string {
+  switch (state) {
+    case "active":
+    case "complete":
+      return "state-pill--active";
+    case "submitting":
+    case "dispute_wait":
+    case "finalizing":
+    case "applying":
+    case "cancelling":
+      return "state-pill--settling";
+    case "done":
+      return "state-pill--done";
+    case "cancelled":
+    case "failed":
+      return "state-pill--bad";
+    default:
+      return "";
+  }
+}
+
 function shortAddr(s: string) {
   return s.length > 12 ? `${s.slice(0, 6)}…${s.slice(-4)}` : s;
 }
@@ -48,7 +72,9 @@ export function MatchHeader({
   return (
     <header className="match-header">
       <div className="match-header__top">
-        <div className="state-pill">{STATE_LABEL[snap.state] ?? snap.state}</div>
+        <div className={`state-pill ${phaseModifier(snap.state)}`}>
+          {STATE_LABEL[snap.state] ?? snap.state}
+        </div>
         <div className="match-header__actions">
           <button className="link" onClick={() => copy(matchId, "id")}>
             {copied === "id" ? "id copied!" : "copy match id"}

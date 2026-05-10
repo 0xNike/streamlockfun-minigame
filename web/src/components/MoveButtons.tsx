@@ -39,7 +39,7 @@ export function MoveButtons({
         {MOVES.map((m) => (
           <button
             key={m.move}
-            className="move-btn"
+            className={`move-btn move-btn--${m.move}`}
             onClick={() => onMove(m.move)}
             disabled={disabled || remaining === 0}
           >

@@ -8,12 +8,10 @@ export function MatchEndCTA({
   snap,
   you,
   matchId,
-  shareUrl,
 }: {
   snap: MatchSnapshot;
   you: Side | null;
   matchId: string;
-  shareUrl: string;
 }) {
   const navigate = useNavigate();
   const { publicKey } = useWallet();
@@ -21,7 +19,7 @@ export function MatchEndCTA({
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [copied, setCopied] = useState<"link" | "id" | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const yourStream = you === "a" ? snap.playerA.streamId : snap.playerB?.streamId ?? null;
 
@@ -42,11 +40,11 @@ export function MatchEndCTA({
     }
   }
 
-  async function copy(text: string, kind: "link" | "id") {
+  async function copyId() {
     try {
-      await navigator.clipboard.writeText(text);
-      setCopied(kind);
-      setTimeout(() => setCopied((c) => (c === kind ? null : c)), 1500);
+      await navigator.clipboard.writeText(matchId);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
     } catch {
       // ignore
     }
@@ -60,20 +58,12 @@ export function MatchEndCTA({
   const isFailed = snap.state === "failed";
   if (!isDone && !isCancelled && !isFailed) return null;
 
-  const youWon = isDone && snap.winner === you && you !== null;
-
   return (
     <div className="cta">
       <div className="cta__row">
         {(isDone || isCancelled) && (
           <button className="primary" onClick={playAgain} disabled={busy || !yourStream}>
             {busy ? "Creating match…" : isCancelled ? "Try again" : "Play again"}
-          </button>
-        )}
-
-        {youWon && (
-          <button onClick={() => copy(shareUrl, "link")}>
-            {copied === "link" ? "Link copied!" : "Share win"}
           </button>
         )}
 
@@ -90,8 +80,8 @@ export function MatchEndCTA({
         )}
 
         {isFailed && (
-          <button onClick={() => copy(matchId, "id")}>
-            {copied === "id" ? "ID copied!" : "Copy match id"}
+          <button onClick={copyId}>
+            {copied ? "ID copied!" : "Copy match id"}
           </button>
         )}
       </div>

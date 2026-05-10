@@ -64,6 +64,16 @@ export function Match() {
     void api.getConfig().then(setCfg).catch(() => {});
   }, []);
 
+  // When B joins, the server's `state` broadcast carries only the new state —
+  // not B's wallet/stream. A's snapshot is stuck on playerB = null until we
+  // refetch. Trigger off the first non-partnered state we see without B.
+  useEffect(() => {
+    if (!matchId || !snap) return;
+    if (snap.state === "partnered" || snap.state === "queued") return;
+    if (snap.playerB) return;
+    void api.getMatch(matchId).then(setSnap).catch(() => {});
+  }, [matchId, snap?.state, snap?.playerB]);
+
   // Step 1: classify role.
   useEffect(() => {
     if (!matchId || !wallet) return;
@@ -395,7 +405,7 @@ export function Match() {
         )}
 
       {(snap.state === "done" || snap.state === "cancelled" || snap.state === "failed") && (
-        <MatchEndCTA snap={snap} you={you} matchId={matchId} shareUrl={shareUrl} />
+        <MatchEndCTA snap={snap} you={you} matchId={matchId} />
       )}
     </div>
   );
