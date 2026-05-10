@@ -79,6 +79,18 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_tx_log_session ON tx_log(session_id);
+
+  -- World ID nullifier↔wallet binding for verified-only matches.
+  -- nullifier is the v3-legacy hex string returned by the verify endpoint.
+  -- wallet UNIQUE enforces the strict 1:1 mapping the user picked: re-verify
+  -- with a different wallet replaces the prior row for the same nullifier.
+  CREATE TABLE IF NOT EXISTS humans (
+    nullifier    TEXT PRIMARY KEY,
+    wallet       TEXT NOT NULL UNIQUE,
+    action       TEXT NOT NULL,
+    verified_at  INTEGER NOT NULL,
+    last_seen_at INTEGER NOT NULL
+  );
 `);
 
 // Migrations for previously-deployed schemas (v0 is forgiving — additive only).
@@ -401,4 +413,58 @@ export function signaturesForSession(sessionId: string): { kind: TxKind; sig: st
   return (signaturesForSessionStmt.all(sessionId) as { kind: TxKind; signature: string }[]).map(
     (r) => ({ kind: r.kind, sig: r.signature }),
   );
+}
+
+// ───────── humans (World ID) ─────────
+
+export type HumanRow = {
+  nullifier: string;
+  wallet: string;
+  action: string;
+  verified_at: number;
+  last_seen_at: number;
+};
+
+const getHumanByWalletStmt = db.prepare<[string], HumanRow>(
+  `SELECT * FROM humans WHERE wallet = ?`,
+);
+const getHumanByNullifierStmt = db.prepare<[string], HumanRow>(
+  `SELECT * FROM humans WHERE nullifier = ?`,
+);
+
+export function getHumanByWallet(wallet: string): HumanRow | undefined {
+  return getHumanByWalletStmt.get(wallet);
+}
+
+export function getHumanByNullifier(nullifier: string): HumanRow | undefined {
+  return getHumanByNullifierStmt.get(nullifier);
+}
+
+// Two-step upsert: if the same nullifier verifies under a new wallet, free the
+// old wallet first so the wallet-UNIQUE index doesn't reject the rebind. Then
+// upsert by nullifier. The whole thing runs in one transaction.
+const clearWalletForNullifierStmt = db.prepare(
+  `UPDATE humans SET wallet = '' WHERE nullifier = ? AND wallet != ?`,
+);
+const evictWalletStmt = db.prepare(`DELETE FROM humans WHERE wallet = ? AND nullifier != ?`);
+const upsertHumanStmt = db.prepare(`
+  INSERT INTO humans (nullifier, wallet, action, verified_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?)
+  ON CONFLICT(nullifier) DO UPDATE SET
+    wallet = excluded.wallet,
+    last_seen_at = excluded.last_seen_at
+`);
+
+export const upsertHuman = db.transaction(
+  (args: { nullifier: string; wallet: string; action: string }) => {
+    const now = Math.floor(Date.now() / 1000);
+    clearWalletForNullifierStmt.run(args.nullifier, args.wallet);
+    evictWalletStmt.run(args.wallet, args.nullifier);
+    upsertHumanStmt.run(args.nullifier, args.wallet, args.action, now, now);
+  },
+);
+
+const touchHumanStmt = db.prepare(`UPDATE humans SET last_seen_at = ? WHERE nullifier = ?`);
+export function touchHuman(nullifier: string): void {
+  touchHumanStmt.run(Math.floor(Date.now() / 1000), nullifier);
 }

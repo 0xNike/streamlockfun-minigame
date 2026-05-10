@@ -22,6 +22,7 @@ import {
   type WagerSnapshot,
   type WagerError,
 } from "./wager.js";
+import { SESSION_COOKIE, isWorldIdConfigured, isWalletVerified, verifySession } from "./worldid.js";
 
 function wsUrl(matchId: string, side: "a" | "b"): string {
   return `${config.PUBLIC_WS_URL}/ws/match/${matchId}?as=${side}`;
@@ -44,6 +45,31 @@ export function registerMatchRoutes(app: FastifyInstance): void {
       });
     }
     const body = parsed.data;
+    let creatorNullifier: string | null = null;
+    if (body.verifiedOnly) {
+      if (!isWorldIdConfigured()) {
+        return reply.code(503).send({
+          error: {
+            code: "WORLDID_NOT_CONFIGURED",
+            message: "this server has no World ID configuration",
+            fatal: true,
+          },
+        });
+      }
+      if (!isWalletVerified(req.cookies?.[SESSION_COOKIE], body.wallet)) {
+        return reply.code(401).send({
+          error: {
+            code: "WORLDID_REQUIRED",
+            message: "verify with World ID before creating a verified-only match",
+            fatal: true,
+          },
+        });
+      }
+      // Capture the creator's nullifier so the join handler can reject the
+      // same-human-as-opponent case (one human re-verifying with a second
+      // wallet to play themselves).
+      creatorNullifier = verifySession(req.cookies?.[SESSION_COOKIE])?.nullifier ?? null;
+    }
     const match = createLiveMatch({
       tokenMint: body.tokenMint ?? GAME_TOKEN_MINT,
       playerAWallet: body.wallet,
@@ -51,6 +77,8 @@ export function registerMatchRoutes(app: FastifyInstance): void {
       bpsAtStake: body.bpsAtStake ?? config.STAKE_BPS,
       disputeWindowSec: config.DISPUTE_WINDOW_SEC,
       desiredWagerAmountRaw: body.wagerAmountRaw,
+      verifiedOnly: body.verifiedOnly,
+      creatorNullifier,
     });
     const res: CreateMatchResponse = {
       matchId: match.id,
@@ -81,6 +109,43 @@ export function registerMatchRoutes(app: FastifyInstance): void {
       return reply.code(409).send({
         error: { code: "MATCH_FULL", message: "match already has B", fatal: true },
       });
+    }
+    if (match.verifiedOnly) {
+      if (!isWorldIdConfigured()) {
+        return reply.code(503).send({
+          error: {
+            code: "WORLDID_NOT_CONFIGURED",
+            message: "match requires World ID but server is not configured",
+            fatal: true,
+          },
+        });
+      }
+      if (!isWalletVerified(req.cookies?.[SESSION_COOKIE], parsed.data.wallet)) {
+        return reply.code(401).send({
+          error: {
+            code: "WORLDID_REQUIRED",
+            message: "verify with World ID to join a verified-only match",
+            fatal: true,
+          },
+        });
+      }
+      // Same-human guard: one World ID can re-verify with a second wallet,
+      // but it can't oppose itself in a verified-only match.
+      const joinerNullifier =
+        verifySession(req.cookies?.[SESSION_COOKIE])?.nullifier ?? null;
+      if (
+        match.creatorNullifier &&
+        joinerNullifier &&
+        joinerNullifier === match.creatorNullifier
+      ) {
+        return reply.code(409).send({
+          error: {
+            code: "SAME_HUMAN",
+            message: "you cannot join a verified-only match you created",
+            fatal: true,
+          },
+        });
+      }
     }
 
     // Try to materialise an amount-based WagerSnapshot for this pairing. We
@@ -128,6 +193,14 @@ export function registerMatchRoutes(app: FastifyInstance): void {
     cohortMaxRatio: config.COHORT_MAX_RATIO,
     explorerCluster: config.TOKEN_ENV === "sol" ? "mainnet" : "devnet",
     tokenEnv: config.TOKEN_ENV,
+    worldId: isWorldIdConfigured()
+      ? {
+          enabled: true,
+          appId: config.WORLD_APP_ID!,
+          action: config.WORLD_ACTION,
+          environment: config.WORLD_ENVIRONMENT,
+        }
+      : { enabled: false },
   }));
 
   app.get<{ Params: { mint: string } }>("/api/tokens/:mint", async (req) => {

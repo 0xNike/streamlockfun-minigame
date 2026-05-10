@@ -5,6 +5,7 @@ import { api, type ServerConfig } from "../api";
 import { Wager } from "../components/Wager";
 import { StreamPicker } from "../components/StreamPicker";
 import { WagerInput, type WagerInputResult } from "../components/WagerInput";
+import { WorldIdGate, useIsWalletVerified, useWorldId } from "../worldid";
 
 interface PickedStream {
   streamId: string;
@@ -21,6 +22,10 @@ export function Home() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [cfg, setCfg] = useState<ServerConfig | null>(null);
+  const [verifiedOnly, setVerifiedOnly] = useState(false);
+  const wallet = publicKey?.toBase58() ?? null;
+  const verified = useIsWalletVerified(wallet);
+  const { logout } = useWorldId();
 
   useEffect(() => {
     void api
@@ -53,11 +58,12 @@ export function Home() {
     setBusy(true);
     setErr(null);
     try {
-      const wallet = publicKey.toBase58();
+      const walletBase58 = publicKey.toBase58();
       const { matchId } = await api.createMatch({
-        wallet,
+        wallet: walletBase58,
         streamId: picked.streamId,
         wagerAmountRaw: wagerResult.status === "ok" ? wagerResult.amountRaw : undefined,
+        verifiedOnly,
       });
       navigate(`/match/${matchId}`);
     } catch (e) {
@@ -73,11 +79,12 @@ export function Home() {
     navigate(`/match/${trimmed}`);
   }
 
-  const wallet = publicKey?.toBase58() ?? null;
   const wagerOk =
     !picked?.lockedTokenAmount || // legacy stream — server falls back to bps path
     wagerResult.status === "ok";
-  const ready = !!wallet && !!cfg && !!picked && wagerOk;
+  const worldIdOk = !verifiedOnly || verified;
+  const ready = !!wallet && !!cfg && !!picked && wagerOk && worldIdOk;
+  const worldIdEnabled = cfg?.worldId.enabled === true;
 
   return (
     <>
@@ -120,11 +127,51 @@ export function Home() {
           </div>
         )}
 
-        <div className="row">
-          <button onClick={createMatch} disabled={!ready || busy} className="primary">
-            {busy ? "Creating…" : "Create new match"}
-          </button>
-        </div>
+        {worldIdEnabled && (
+          <div className="row" style={{ alignItems: "center", gap: 12, marginBottom: 8 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={verifiedOnly}
+                onChange={(e) => setVerifiedOnly(e.target.checked)}
+              />
+              <span>Verified players only (World ID)</span>
+            </label>
+            {verified && (
+              <span className="dim small" title="This wallet is bound to a verified human via World ID">
+                ✓ verified ·{" "}
+                <button
+                  type="button"
+                  onClick={() => void logout()}
+                  className="link"
+                  style={{ background: "none", border: 0, padding: 0, cursor: "pointer", textDecoration: "underline" }}
+                >
+                  unbind
+                </button>
+              </span>
+            )}
+          </div>
+        )}
+
+        {verifiedOnly && !verified && wallet ? (
+          <div className="row">
+            <WorldIdGate
+              wallet={wallet}
+              cfg={cfg}
+              buttonLabel="Verify with World ID to create"
+            >
+              <button onClick={createMatch} disabled={!ready || busy} className="primary">
+                {busy ? "Creating…" : "Create new match"}
+              </button>
+            </WorldIdGate>
+          </div>
+        ) : (
+          <div className="row">
+            <button onClick={createMatch} disabled={!ready || busy} className="primary">
+              {busy ? "Creating…" : "Create new match"}
+            </button>
+          </div>
+        )}
         <div className="divider">or</div>
         <div className="row">
           <input

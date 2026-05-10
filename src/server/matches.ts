@@ -119,6 +119,11 @@ export class LiveMatch {
     public readonly bpsAtStake: number,
     public readonly playerA: PlayerSlot,
     public playerB: PlayerSlot | null,
+    /** When true, joiners must present a valid wid_session cookie matching their wallet. */
+    public readonly verifiedOnly: boolean = false,
+    /** Creator's World ID nullifier when verifiedOnly. Used at join time to
+     *  reject the same-human-as-opponent case. Null on open matches. */
+    public readonly creatorNullifier: string | null = null,
   ) {
     this.state = playerB ? "creating" : "partnered";
   }
@@ -821,6 +826,7 @@ export class LiveMatch {
       finalizeEligibleAt: this.endTs ? this.endTs + this.disputeWindowSec : null,
       bpsAtStake: this.bpsAtStake,
       wager: this.wager,
+      verifiedOnly: this.verifiedOnly,
       signatures: signaturesForSession(this.id),
       failedReason: this.failedReason,
     };
@@ -863,6 +869,10 @@ export function createLiveMatch(args: {
    *  B-join (clamped down to min(lockedA, lockedB)). When omitted, B-join
    *  derives amount from `bpsAtStake × min(lockedA, lockedB) / 10000`. */
   desiredWagerAmountRaw?: string;
+  /** When true, joiners must verify with World ID before joining. */
+  verifiedOnly?: boolean;
+  /** Creator's World ID nullifier (only meaningful when verifiedOnly). */
+  creatorNullifier?: string | null;
 }): LiveMatch {
   const id = randomBytes(32).toString("hex"); // sessionIdHex doubles as matchId
   insertSession({
@@ -889,6 +899,8 @@ export function createLiveMatch(args: {
       lockedTokenAmount: null,
     },
     null,
+    args.verifiedOnly ?? false,
+    args.creatorNullifier ?? null,
   );
   match.desiredWagerAmountRaw = args.desiredWagerAmountRaw ?? null;
   registry.set(id, match);

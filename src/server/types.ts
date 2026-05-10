@@ -85,6 +85,10 @@ export const CreateMatchBody = z.object({
   // If omitted, the server derives it at B-join from `bpsAtStake × min(locked)
   // / 10000`. Validated at join time, never at create.
   wagerAmountRaw: z.string().regex(/^\d+$/, "wagerAmountRaw must be a u64 decimal").optional(),
+  // Per-match World ID gate. When true, both creator and joiner must present a
+  // valid wid_session cookie matching their wallet. When false (default), the
+  // match is open to anyone — same UX as before World ID was introduced.
+  verifiedOnly: z.boolean().optional().default(false),
 });
 export type CreateMatchBody = z.infer<typeof CreateMatchBody>;
 
@@ -159,6 +163,8 @@ export type MatchSnapshot = {
   bpsAtStake: number;
   /** Amount-based wager record, when both sides have lockedTokenAmount data. */
   wager: WagerSnapshotPublic | null;
+  /** True when the creator opted into the World ID gate; joiners must verify. */
+  verifiedOnly: boolean;
   signatures: { kind: TxKind; sig: string }[];
   failedReason: string | null;
 };
@@ -264,6 +270,11 @@ export const ERROR_CODES = [
   "LATE_REVEAL",
   "RPC_DEGRADED",
   "INTERNAL",
+  // World ID gating
+  "WORLDID_REQUIRED",
+  "WORLDID_NOT_CONFIGURED",
+  "WALLET_MISMATCH",
+  "SAME_HUMAN",
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 

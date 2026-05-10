@@ -23,6 +23,7 @@ import { StreamPicker, type StreamRow } from "../components/StreamPicker";
 import { StakeMath } from "../components/StakeMath";
 import { MatchEndCTA } from "../components/MatchEndCTA";
 import { PredictedWager } from "../components/PredictedWager";
+import { WorldIdGate, useIsWalletVerified } from "../worldid";
 
 interface TxEvent {
   kind: TxKind;
@@ -57,6 +58,7 @@ export function Match() {
   // no-reveal forfeit by the server (same as ghosting after committing).
   const secretsRef = useRef<Map<number, { move: Move; nonce: string }>>(new Map());
   const wallet = publicKey?.toBase58() ?? null;
+  const verified = useIsWalletVerified(wallet);
 
   useEffect(() => {
     void api.getConfig().then(setCfg).catch(() => {});
@@ -245,6 +247,22 @@ export function Match() {
       <div className="match">
         <div className="card">
           <h1>You're about to join this match as Player B</h1>
+          {s.verifiedOnly && (
+            <div
+              className="small"
+              style={{
+                display: "inline-block",
+                marginTop: 4,
+                padding: "2px 8px",
+                borderRadius: 999,
+                background: "#1f2937",
+                color: "#a7f3d0",
+                fontWeight: 600,
+              }}
+            >
+              🌍 Verified players only — World ID required
+            </div>
+          )}
           <p className="dim small">
             Opponent: <code>{s.playerA.wallet.slice(0, 8)}…{s.playerA.wallet.slice(-4)}</code> ·
             stream <code>{s.playerA.streamId.slice(0, 8)}…</code>
@@ -287,9 +305,21 @@ export function Match() {
               cohortMaxRatio={cfg?.cohortMaxRatio ?? 5}
             />
           )}
-          <button className="primary" onClick={confirmJoin} disabled={joining || !joinerStream}>
-            {joining ? "Joining…" : "Confirm join"}
-          </button>
+          {s.verifiedOnly && !verified ? (
+            <WorldIdGate
+              wallet={wallet}
+              cfg={cfg}
+              buttonLabel="Verify with World ID to join"
+            >
+              <button className="primary" onClick={confirmJoin} disabled={joining || !joinerStream}>
+                {joining ? "Joining…" : "Confirm join"}
+              </button>
+            </WorldIdGate>
+          ) : (
+            <button className="primary" onClick={confirmJoin} disabled={joining || !joinerStream}>
+              {joining ? "Joining…" : "Confirm join"}
+            </button>
+          )}
           <span className="dim small" style={{ marginLeft: 12 }}>
             By joining, you commit this stream to the match's stake.
           </span>

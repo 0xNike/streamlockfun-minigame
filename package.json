@@ -17,9 +17,11 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@fastify/cookie": "^9.4.0",
     "@fastify/websocket": "^10.0.1",
     "@solana/web3.js": "^1.95.0",
     "@streamlock/operator-sdk": "file:../streamlockfun/packages/operator-sdk",
+    "@worldcoin/idkit-core": "^4.1.4",
     "better-sqlite3": "^11.3.0",
     "dotenv": "^16.4.5",
     "fastify": "^4.28.0",

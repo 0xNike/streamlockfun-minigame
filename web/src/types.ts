@@ -83,6 +83,8 @@ export type MatchSnapshot = {
   bpsAtStake: number;
   /** Amount-based wager record, when both sides have lockedTokenAmount data. */
   wager: WagerSnapshotPublic | null;
+  /** Creator opted into the World ID gate; joiners must verify before joining. */
+  verifiedOnly: boolean;
   signatures: { kind: TxKind; sig: string }[];
   failedReason: string | null;
 };

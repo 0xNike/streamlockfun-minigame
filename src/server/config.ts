@@ -39,6 +39,16 @@ const Schema = z.object({
   // Drives the Streamlock app explorer link (app.streamlock.fun/<TOKEN_ENV>/<mint>).
   // "soldev" → devnet, "sol" → mainnet. Mirrors STREAMLOCK_CHAIN.
   TOKEN_ENV: z.enum(["sol", "soldev"]).default("soldev"),
+  // World ID — only required when a creator opts a match into "verified only".
+  // When any of WORLD_APP_ID / WORLD_RP_ID / WORLD_SIGNING_KEY / WORLD_SESSION_SECRET
+  // is missing, /api/worldid/* routes return WORLDID_NOT_CONFIGURED and creators
+  // can't toggle the verifiedOnly flag.
+  WORLD_APP_ID: z.string().optional(),
+  WORLD_RP_ID: z.string().optional(),
+  WORLD_ACTION: z.string().default("play-rps"),
+  WORLD_ENVIRONMENT: z.enum(["staging", "production"]).default("staging"),
+  WORLD_SIGNING_KEY: z.string().optional(),
+  WORLD_SESSION_SECRET: z.string().min(16).optional(),
 });
 
 export const config = Schema.parse(process.env);

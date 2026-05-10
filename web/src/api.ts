@@ -42,6 +42,30 @@ export type ServerConfig = {
   cohortMaxRatio: number;
   explorerCluster: "devnet" | "mainnet" | string;
   tokenEnv: "sol" | "soldev";
+  /** World ID server config. `enabled: false` → don't show the verified-only toggle. */
+  worldId:
+    | {
+        enabled: true;
+        appId: string;
+        action: string;
+        environment: "staging" | "production";
+      }
+    | { enabled: false };
+};
+
+export type WorldIdMeResponse =
+  | { verified: true; wallet: string; nullifier: string; exp: number }
+  | { verified: false };
+
+export type WorldIdContext = {
+  app_id: string;
+  rp_id: string;
+  action: string;
+  environment: "staging" | "production";
+  nonce: string;
+  created_at: number;
+  expires_at: number;
+  signature: string;
 };
 
 export const api = {
@@ -66,11 +90,15 @@ export const api = {
     /** Optional absolute wager (raw u64 base units as a decimal string).
      *  Server clamps to min(P1.locked, P2.locked) at B-join. */
     wagerAmountRaw?: string;
+    /** Opt the match into the World ID sybil gate. Both creator and joiner
+     *  need a valid wid_session cookie matching their wallet. */
+    verifiedOnly?: boolean;
   }): Promise<CreateMatchResponse> {
     const res = await fetch(`${BASE}/api/matches`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(args),
+      credentials: "include",
     });
     return asJson<CreateMatchResponse>(res);
   },
@@ -79,11 +107,41 @@ export const api = {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ wallet, streamId }),
+      credentials: "include",
     });
     return asJson<JoinMatchResponse>(res);
   },
   async getMatch(matchId: string) {
     const res = await fetch(`${BASE}/api/matches/${encodeURIComponent(matchId)}`);
     return asJson<import("./types.ts").MatchSnapshot>(res);
+  },
+  worldid: {
+    async me(): Promise<WorldIdMeResponse> {
+      const res = await fetch(`${BASE}/api/worldid/me`, { credentials: "include" });
+      return asJson<WorldIdMeResponse>(res);
+    },
+    async context(wallet: string): Promise<WorldIdContext> {
+      const res = await fetch(`${BASE}/api/worldid/context`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ wallet }),
+      });
+      return asJson<WorldIdContext>(res);
+    },
+    async verify(wallet: string, proof: unknown): Promise<{ verified: true; wallet: string; nullifier: string; exp: number }> {
+      const res = await fetch(`${BASE}/api/worldid/verify`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ wallet, proof }),
+        credentials: "include",
+      });
+      return asJson(res);
+    },
+    async logout(): Promise<void> {
+      await fetch(`${BASE}/api/worldid/logout`, {
+        method: "POST",
+        credentials: "include",
+      });
+    },
   },
 };
