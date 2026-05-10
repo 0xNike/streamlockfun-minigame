@@ -25,6 +25,11 @@ const Schema = z.object({
   REVEAL_DEADLINE_SEC: z.coerce.number().int().positive().default(15),
   RECONNECT_GRACE_SEC: z.coerce.number().int().nonnegative().default(30),
   STAKE_BPS: z.coerce.number().int().positive().max(10000).default(1000),
+  // Cohort tolerance band for amount-based betting. A pairing is rejected when
+  // max(lockedA, lockedB) / min(lockedA, lockedB) exceeds this ratio. 5x is
+  // poker-room-tier; tighten to 2-3 if you want chess-style cohorting. Set to
+  // a very large number (e.g. 10000) to disable.
+  COHORT_MAX_RATIO: z.coerce.number().positive().default(5),
   DISPUTE_WINDOW_SEC: z.coerce.number().int().positive().default(120),
   FINALIZE_BUFFER_SEC: z.coerce.number().int().nonnegative().default(30),
   // endTs = nowSec() + ENDTS_BUFFER_SEC, recomputed per create attempt so

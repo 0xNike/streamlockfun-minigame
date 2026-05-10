@@ -33,11 +33,22 @@ export function Outcome({ snap, you }: { snap: MatchSnapshot; you: Side | null }
   const winnerSlot = winner === "a" ? snap.playerA : snap.playerB;
   const loserSlot = winner === "a" ? snap.playerB : snap.playerA;
   const youWon = you === winner;
-  const stakePct = pct(snap.bpsAtStake);
 
-  // Wager in absolute token units = loser's lockedTokenAmount × stakeBps / 10000.
+  // Prefer the wager snapshot when present — its amount + per-outcome bps are
+  // the canonical "what was agreed" record, frozen at B-join. Fall back to
+  // loser-side derivation (legacy / pre-migration) when no snapshot.
+  const settledBps = snap.wager
+    ? winner === "a"
+      ? snap.wager.bpsIfALoses
+      : snap.wager.bpsIfBLoses
+    : snap.bpsAtStake;
+  const stakePct = pct(settledBps);
+
+  const wagerBaseUnits = snap.wager
+    ? safeBigInt(snap.wager.amountRaw)
+    : stakeBaseUnits(loserSlot?.lockedTokenAmount ?? null, snap.bpsAtStake);
   const wagerTokens = formatToken(
-    stakeBaseUnits(loserSlot?.lockedTokenAmount ?? null, snap.bpsAtStake),
+    wagerBaseUnits,
     snap.tokenMeta?.decimals ?? null,
     snap.tokenMeta?.symbol ?? null,
   );
@@ -86,7 +97,7 @@ export function Outcome({ snap, you }: { snap: MatchSnapshot; you: Side | null }
               <tr>
                 <td className="dim">Stake</td>
                 <td>
-                  {snap.bpsAtStake} bps ({stakePct} of the loser's stream)
+                  {settledBps} bps ({stakePct} of the loser's stream)
                   {wagerTokens && <span className="dim small"> · {wagerTokens}</span>}
                 </td>
               </tr>
@@ -95,7 +106,7 @@ export function Outcome({ snap, you }: { snap: MatchSnapshot; you: Side | null }
                 <td>
                   <strong>{winner.toUpperCase()}</strong> — {shortAddr(winnerSlot.wallet)}
                   <div className="dim small">
-                    +{snap.bpsAtStake} bps inside stream {shortAddr(loserSlot.streamId)}
+                    +{settledBps} bps inside stream {shortAddr(loserSlot.streamId)}
                   </div>
                 </td>
               </tr>
@@ -104,7 +115,7 @@ export function Outcome({ snap, you }: { snap: MatchSnapshot; you: Side | null }
                 <td>
                   <strong>{winner === "a" ? "B" : "A"}</strong> — {shortAddr(loserSlot.wallet)}
                   <div className="dim small">
-                    −{snap.bpsAtStake} bps inside stream {shortAddr(loserSlot.streamId)} (own stream)
+                    −{settledBps} bps inside stream {shortAddr(loserSlot.streamId)} (own stream)
                   </div>
                 </td>
               </tr>
@@ -114,4 +125,12 @@ export function Outcome({ snap, you }: { snap: MatchSnapshot; you: Side | null }
       )}
     </div>
   );
+}
+
+function safeBigInt(s: string): bigint | null {
+  try {
+    return BigInt(s);
+  } catch {
+    return null;
+  }
 }

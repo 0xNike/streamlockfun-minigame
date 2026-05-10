@@ -27,3 +27,6 @@ operator.json
 
 # TypeScript incremental build cache
 *.tsbuildinfo
+
+# MCP server config — contains API credentials
+.mcp.json

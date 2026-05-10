@@ -11,11 +11,19 @@
  * facts, not stale facts.
  */
 
-import type { PlayerSlotSnapshot, TokenMetaPublic } from "../types";
+import type { PlayerSlotSnapshot, TokenMetaPublic, WagerSnapshotPublic } from "../types";
 import { formatToken, stakeBaseUnits } from "../format";
 
 function fmtPct(bps: number): string {
   return `${(bps / 100).toFixed(2)}%`;
+}
+
+function safeBigInt(s: string): bigint | null {
+  try {
+    return BigInt(s);
+  } catch {
+    return null;
+  }
 }
 
 function fmtSol(lamports: string | null): string | null {
@@ -44,13 +52,22 @@ export function StakeMath({
   bpsAtStake,
   youSide,
   tokenMeta,
+  wager,
 }: {
   playerA: PlayerSlotSnapshot;
   playerB: PlayerSlotSnapshot | null;
   bpsAtStake: number;
   youSide: "a" | "b" | null;
   tokenMeta?: TokenMetaPublic | null;
+  wager?: WagerSnapshotPublic | null;
 }) {
+  // When a wager snapshot exists, the absolute amount is canonical and per-side
+  // bps are precomputed (rounding-safe). Display follows the snapshot.
+  const wagerAmountTokens = wager
+    ? formatToken(safeBigInt(wager.amountRaw), tokenMeta?.decimals ?? null, tokenMeta?.symbol ?? null)
+    : null;
+  // Headline percentage: when there's a snapshot, "% of your own stream" differs
+  // per side — show stakeBps as the original intent, but per-side bps in the cards.
   const wagerPct = fmtPct(bpsAtStake);
 
   if (!youSide) {
@@ -64,7 +81,9 @@ export function StakeMath({
       <div className="stake-math">
         <h3>Stake math</h3>
         <p>
-          The wager is <strong>{wagerPct}</strong> of the loser's stream.
+          The wager is{" "}
+          <strong>{wagerAmountTokens ?? `${wagerPct} of the loser's stream`}</strong>
+          {wagerAmountTokens && <span className="dim small"> ({wagerPct} intent)</span>}.
         </p>
         {summaryParts.length > 0 && (
           <p className="dim small">{summaryParts.join(" · ")}.</p>
@@ -77,11 +96,30 @@ export function StakeMath({
   const opp = youSide === "a" ? playerB : playerA;
   const yourBps = yours?.effectiveBps ?? null;
   const oppBps = opp?.effectiveBps ?? null;
-  const yourAfterLoss = yourBps !== null ? Math.max(0, yourBps - bpsAtStake) : null;
+
+  // With a snapshot, the bps each side gives up if they lose is precomputed —
+  // and per-side, not symmetric. Without a snapshot, fall back to bpsAtStake.
+  const yourLoseBps = wager
+    ? youSide === "a"
+      ? wager.bpsIfALoses
+      : wager.bpsIfBLoses
+    : bpsAtStake;
+  const oppLoseBps = wager
+    ? youSide === "a"
+      ? wager.bpsIfBLoses
+      : wager.bpsIfALoses
+    : bpsAtStake;
+  const yourLosePct = fmtPct(yourLoseBps);
+  const oppLosePct = fmtPct(oppLoseBps);
+
+  const yourAfterLoss = yourBps !== null ? Math.max(0, yourBps - yourLoseBps) : null;
   const yourSol = fmtSol(yours?.entitledLamports ?? null);
 
-  const yourWagerTokens = wagerAmount(yours, bpsAtStake, tokenMeta);
-  const oppWagerTokens = wagerAmount(opp, bpsAtStake, tokenMeta);
+  // With a snapshot, the wager amount is the same on both sides (that's the
+  // whole point of A) — use the snapshot's amount. Without one, fall back to
+  // each side's locked × bps derivation.
+  const yourWagerTokens = wagerAmountTokens ?? wagerAmount(yours, bpsAtStake, tokenMeta);
+  const oppWagerTokens = wagerAmountTokens ?? wagerAmount(opp, bpsAtStake, tokenMeta);
 
   return (
     <div className="stake-math">
@@ -99,7 +137,7 @@ export function StakeMath({
         <div className="stake-math__outcome win">
           <div className="stake-math__outcome-label">If you WIN</div>
           <div>
-            You take <strong>+{wagerPct}</strong>
+            You take <strong>+{oppLosePct}</strong>
             {oppWagerTokens && <> ({oppWagerTokens})</>}{" "}of the opponent's stream.
           </div>
         </div>
@@ -114,13 +152,13 @@ export function StakeMath({
                     {" "}<span className="dim">(−{yourWagerTokens})</span>
                   </>
                 )}
-                <span className="dim"> · −{wagerPct} of your stream.</span>
+                <span className="dim"> · −{yourLosePct} of your stream.</span>
               </>
             ) : (
               <>
-                You give up <strong>{yourWagerTokens ?? `${wagerPct} of your stream`}</strong>
+                You give up <strong>{yourWagerTokens ?? `${yourLosePct} of your stream`}</strong>
                 {yourWagerTokens && (
-                  <span className="dim small"> ({wagerPct} of your stream)</span>
+                  <span className="dim small"> ({yourLosePct} of your stream)</span>
                 )}
                 .
               </>

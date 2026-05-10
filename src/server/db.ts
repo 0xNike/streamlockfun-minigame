@@ -20,24 +20,32 @@ db.pragma("foreign_keys = ON");
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS sessions (
-    id                    TEXT PRIMARY KEY,
-    pda                   TEXT,
-    state                 TEXT NOT NULL,
-    token_mint            TEXT,
-    player_a_wallet       TEXT NOT NULL,
-    player_a_stream       TEXT NOT NULL,
-    player_b_wallet       TEXT,
-    player_b_stream       TEXT,
-    end_ts                INTEGER,
-    dispute_window_sec    INTEGER NOT NULL,
-    bps_at_stake          INTEGER NOT NULL,
-    round_index           INTEGER NOT NULL DEFAULT 0,
-    rounds_json           TEXT NOT NULL DEFAULT '[]',
-    winner                TEXT,
-    deltas_json           TEXT,
-    failed_reason         TEXT,
-    created_at            INTEGER NOT NULL,
-    updated_at            INTEGER NOT NULL
+    id                       TEXT PRIMARY KEY,
+    pda                      TEXT,
+    state                    TEXT NOT NULL,
+    token_mint               TEXT,
+    player_a_wallet          TEXT NOT NULL,
+    player_a_stream          TEXT NOT NULL,
+    player_b_wallet          TEXT,
+    player_b_stream          TEXT,
+    end_ts                   INTEGER,
+    dispute_window_sec       INTEGER NOT NULL,
+    bps_at_stake             INTEGER NOT NULL,
+    -- Wager snapshot (amount-based betting; nullable for ratcheting old rows).
+    -- All five are populated together at B-join time. Settlement reads these
+    -- when present; falls back to bps_at_stake symmetric path when null.
+    wager_amount_raw         TEXT,
+    locked_a_at_match_time   TEXT,
+    locked_b_at_match_time   TEXT,
+    bps_if_a_loses           INTEGER,
+    bps_if_b_loses           INTEGER,
+    round_index              INTEGER NOT NULL DEFAULT 0,
+    rounds_json              TEXT NOT NULL DEFAULT '[]',
+    winner                   TEXT,
+    deltas_json              TEXT,
+    failed_reason            TEXT,
+    created_at               INTEGER NOT NULL,
+    updated_at               INTEGER NOT NULL
   );
 
   CREATE INDEX IF NOT EXISTS idx_sessions_state ON sessions(state);
@@ -75,8 +83,22 @@ db.exec(`
 
 // Migrations for previously-deployed schemas (v0 is forgiving — additive only).
 const sessionCols = db.prepare(`PRAGMA table_info(sessions)`).all() as { name: string }[];
-if (!sessionCols.some((c) => c.name === "token_mint")) {
+const sessionColNames = new Set(sessionCols.map((c) => c.name));
+if (!sessionColNames.has("token_mint")) {
   db.exec(`ALTER TABLE sessions ADD COLUMN token_mint TEXT`);
+}
+// Wager snapshot columns (amount-based betting). All nullable so pre-migration
+// rows retain the symmetric bps_at_stake path; new rows populate the snapshot.
+for (const [col, type] of [
+  ["wager_amount_raw", "TEXT"],
+  ["locked_a_at_match_time", "TEXT"],
+  ["locked_b_at_match_time", "TEXT"],
+  ["bps_if_a_loses", "INTEGER"],
+  ["bps_if_b_loses", "INTEGER"],
+] as const) {
+  if (!sessionColNames.has(col)) {
+    db.exec(`ALTER TABLE sessions ADD COLUMN ${col} ${type}`);
+  }
 }
 
 // moves table: commit-reveal migration. The old schema had `move NOT NULL`;
@@ -130,6 +152,12 @@ export type SessionRow = {
   end_ts: number | null;
   dispute_window_sec: number;
   bps_at_stake: number;
+  // Wager snapshot — null on legacy rows, populated together at B-join.
+  wager_amount_raw: string | null;
+  locked_a_at_match_time: string | null;
+  locked_b_at_match_time: string | null;
+  bps_if_a_loses: number | null;
+  bps_if_b_loses: number | null;
   round_index: number;
   rounds_json: string;
   winner: Side | "tie" | null;
@@ -200,6 +228,39 @@ export function setPlayerB(
   state: MatchState,
 ): void {
   setPlayerBStmt.run(wallet, streamId, state, Math.floor(Date.now() / 1000), id);
+}
+
+const setWagerSnapshotStmt = db.prepare(`
+  UPDATE sessions SET
+    wager_amount_raw = ?,
+    locked_a_at_match_time = ?,
+    locked_b_at_match_time = ?,
+    bps_if_a_loses = ?,
+    bps_if_b_loses = ?,
+    updated_at = ?
+  WHERE id = ?
+`);
+
+/** Persist the agreed-to wager snapshot. Called once at B-join, never updated. */
+export function setWagerSnapshot(
+  id: string,
+  snap: {
+    amountRaw: string;
+    lockedA: string;
+    lockedB: string;
+    bpsIfALoses: number;
+    bpsIfBLoses: number;
+  },
+): void {
+  setWagerSnapshotStmt.run(
+    snap.amountRaw,
+    snap.lockedA,
+    snap.lockedB,
+    snap.bpsIfALoses,
+    snap.bpsIfBLoses,
+    Math.floor(Date.now() / 1000),
+    id,
+  );
 }
 
 const setRoundsStmt = db.prepare(

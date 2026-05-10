@@ -49,6 +49,22 @@ export type TokenMetaPublic = {
   imageUri: string | null;
 };
 
+/**
+ * Immutable record of an agreed-to wager. Mirror of `WagerSnapshotPublic` on
+ * the server. Null on legacy matches; populated at B-join on amount-based ones.
+ */
+export type WagerSnapshotPublic = {
+  /** Absolute amount in raw u64 base units (BigInt-safe decimal string). */
+  amountRaw: string;
+  /** stakeBps used to derive amountRaw — kept for display ("this is a 10% match"). */
+  stakeBps: number;
+  /** Per-side lockedTokenAmount snapshot at agreement time. */
+  lockedAtMatchTime: { a: string; b: string };
+  /** Loser-bps for each outcome, precomputed (rounded up to keep winner credited). */
+  bpsIfALoses: number;
+  bpsIfBLoses: number;
+};
+
 export type MatchSnapshot = {
   matchId: string;
   state: MatchState;
@@ -63,7 +79,10 @@ export type MatchSnapshot = {
   endTs: number | null;
   disputeWindowSec: number;
   finalizeEligibleAt: number | null;
+  /** Stake intent in bps. Always populated. Display fallback when `wager` is null. */
   bpsAtStake: number;
+  /** Amount-based wager record, when both sides have lockedTokenAmount data. */
+  wager: WagerSnapshotPublic | null;
   signatures: { kind: TxKind; sig: string }[];
   failedReason: string | null;
 };

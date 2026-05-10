@@ -18,7 +18,7 @@ function shortStream(s: string) {
   return s.length > 14 ? `${s.slice(0, 8)}…${s.slice(-4)}` : s;
 }
 
-interface StreamRow {
+export interface StreamRow {
   streamId: string;
   effectiveBps?: number | null;
   lockedTokenAmount?: string | null;
@@ -35,7 +35,7 @@ export function StreamPicker({
   tokenMint: string | null;
   tokenMeta?: TokenMetaPublic | null;
   value: string | null;
-  onChange: (streamId: string | null) => void;
+  onChange: (stream: StreamRow | null) => void;
 }) {
   const [streams, setStreams] = useState<StreamRow[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -54,7 +54,7 @@ export function StreamPicker({
       .getMyStreams(wallet, tokenMint)
       .then((res) => {
         setStreams(res.streams);
-        if (res.streams.length === 1) onChange(res.streams[0].streamId);
+        if (res.streams.length === 1) onChange(res.streams[0]);
         else if (value && !res.streams.some((s) => s.streamId === value)) {
           onChange(null);
         }
@@ -108,7 +108,10 @@ export function StreamPicker({
     <select
       className="picker"
       value={value ?? ""}
-      onChange={(e) => onChange(e.target.value || null)}
+      onChange={(e) => {
+        const id = e.target.value || null;
+        onChange(id ? streams!.find((s) => s.streamId === id) ?? null : null);
+      }}
     >
       <option value="">Select a stream…</option>
       {streams.map((s) => (

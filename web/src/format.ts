@@ -65,3 +65,45 @@ function formatThousands(intStr: string): string {
   const withSep = digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   return negative ? `-${withSep}` : withSep;
 }
+
+/**
+ * Inverse of `formatToken`. Parses human-typed input ("1,234.56") into raw
+ * base units using the token's decimals.
+ *
+ * Returns null on invalid input (multiple decimals, letters, negative,
+ * empty). When decimals is null/undefined, the input is treated as already
+ * in base units (integer only). Strips commas and surrounding whitespace.
+ */
+export function parseHumanToken(
+  input: string,
+  decimals: number | null | undefined,
+): bigint | null {
+  if (typeof input !== "string") return null;
+  const trimmed = input.trim().replace(/,/g, "");
+  if (trimmed === "" || trimmed === ".") return null;
+  if (trimmed.startsWith("-")) return null;
+
+  if (decimals === null || decimals === undefined) {
+    if (!/^\d+$/.test(trimmed)) return null;
+    try {
+      return BigInt(trimmed);
+    } catch {
+      return null;
+    }
+  }
+
+  if (!/^\d*\.?\d*$/.test(trimmed)) return null;
+  const [intPart = "", fracPartRaw = ""] = trimmed.split(".");
+  if (intPart === "" && fracPartRaw === "") return null;
+
+  // Truncate (don't round) excess fractional precision so users can't
+  // accidentally type a sub-base-unit amount and have it silently rounded up.
+  const fracPart = fracPartRaw.slice(0, decimals).padEnd(decimals, "0");
+  try {
+    const intBig = intPart === "" ? 0n : BigInt(intPart);
+    const fracBig = fracPart === "" ? 0n : BigInt(fracPart);
+    return intBig * 10n ** BigInt(decimals) + fracBig;
+  } catch {
+    return null;
+  }
+}

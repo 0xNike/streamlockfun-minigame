@@ -7,6 +7,7 @@ import { commitHash, newNonce } from "../crypto";
 import type {
   MatchSnapshot,
   Move,
+  PlayerSlotSnapshot,
   RoundResult,
   ServerFrame,
   Side,
@@ -18,9 +19,10 @@ import { SettlementProgress } from "../components/SettlementProgress";
 import { MatchHeader } from "../components/MatchHeader";
 import { Outcome } from "../components/Outcome";
 import { Wager } from "../components/Wager";
-import { StreamPicker } from "../components/StreamPicker";
+import { StreamPicker, type StreamRow } from "../components/StreamPicker";
 import { StakeMath } from "../components/StakeMath";
 import { MatchEndCTA } from "../components/MatchEndCTA";
+import { PredictedWager } from "../components/PredictedWager";
 
 interface TxEvent {
   kind: TxKind;
@@ -45,7 +47,7 @@ export function Match() {
   const [cfg, setCfg] = useState<ServerConfig | null>(null);
   const [joinErr, setJoinErr] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
-  const [joinerStream, setJoinerStream] = useState<string | null>(null);
+  const [joinerStream, setJoinerStream] = useState<StreamRow | null>(null);
   const [txEvents, setTxEvents] = useState<TxEvent[]>([]);
   const [roundDeadline, setRoundDeadline] = useState<number | null>(null);
   const [committedRound, setCommittedRound] = useState<number | null>(null);
@@ -93,7 +95,7 @@ export function Match() {
     setJoining(true);
     setJoinErr(null);
     try {
-      await api.joinMatch(matchId, wallet, joinerStream);
+      await api.joinMatch(matchId, wallet, joinerStream.streamId);
       const refreshed = await api.getMatch(matchId);
       setSnap(refreshed);
       setRole({ kind: "playing", you: "b" });
@@ -225,6 +227,20 @@ export function Match() {
   // Pre-join confirmation
   if (role.kind === "needs-confirm") {
     const s = role.snapshot;
+    // Synthesize a playerB snapshot from the joiner's selected stream so
+    // StakeMath can render the loss-side wager in token units symmetrically
+    // with the win side. Server snapshot has no playerB yet (joiner hasn't
+    // joined), but the joiner's StreamPicker selection has the data we need.
+    const provisionalB: PlayerSlotSnapshot | null = joinerStream
+      ? {
+          wallet,
+          streamId: joinerStream.streamId,
+          connected: true,
+          effectiveBps: joinerStream.effectiveBps ?? null,
+          entitledLamports: null,
+          lockedTokenAmount: joinerStream.lockedTokenAmount ?? null,
+        }
+      : null;
     return (
       <div className="match">
         <div className="card">
@@ -239,13 +255,15 @@ export function Match() {
           tokenMeta={s.tokenMeta}
           stakeBps={s.bpsAtStake}
           tokenEnv={cfg?.tokenEnv ?? "soldev"}
+          wager={s.wager}
         />
         <StakeMath
           playerA={s.playerA}
-          playerB={null}
+          playerB={provisionalB}
           bpsAtStake={s.bpsAtStake}
           youSide="b"
           tokenMeta={s.tokenMeta}
+          wager={s.wager}
         />
         <div className="card">
           <div className="form">
@@ -255,11 +273,20 @@ export function Match() {
                 wallet={wallet}
                 tokenMint={s.tokenMint}
                 tokenMeta={s.tokenMeta}
-                value={joinerStream}
+                value={joinerStream?.streamId ?? null}
                 onChange={setJoinerStream}
               />
             </label>
           </div>
+          {joinerStream && (
+            <PredictedWager
+              lockedA={s.playerA.lockedTokenAmount}
+              lockedB={joinerStream.lockedTokenAmount}
+              stakeBps={s.bpsAtStake}
+              tokenMeta={s.tokenMeta}
+              cohortMaxRatio={cfg?.cohortMaxRatio ?? 5}
+            />
+          )}
           <button className="primary" onClick={confirmJoin} disabled={joining || !joinerStream}>
             {joining ? "Joining…" : "Confirm join"}
           </button>
@@ -287,6 +314,7 @@ export function Match() {
         tokenMeta={snap.tokenMeta}
         stakeBps={snap.bpsAtStake}
         tokenEnv={cfg?.tokenEnv ?? "soldev"}
+        wager={snap.wager}
         variant="compact"
       />
 
@@ -297,6 +325,7 @@ export function Match() {
           bpsAtStake={snap.bpsAtStake}
           youSide={you}
           tokenMeta={snap.tokenMeta}
+          wager={snap.wager}
         />
       )}
 
@@ -328,7 +357,7 @@ export function Match() {
         snap.state !== "partnered" &&
         snap.state !== "creating" &&
         snap.state !== "done" && (
-          <SettlementProgress snap={snap} txEvents={txEvents} />
+          <SettlementProgress snap={snap} you={you} txEvents={txEvents} />
         )}
 
       {(snap.state === "done" || snap.state === "cancelled" || snap.state === "failed") && (

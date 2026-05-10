@@ -26,6 +26,7 @@ import {
   setPlayerB,
   setRounds,
   setWinner,
+  setWagerSnapshot,
   setFailed,
   signaturesForSession,
 } from "./db.js";
@@ -43,6 +44,7 @@ import {
   type Side,
   TERMINAL_STATES,
 } from "./types.js";
+import { loserBpsFromSnapshot, type WagerSnapshot } from "./wager.js";
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 
@@ -82,6 +84,12 @@ export class LiveMatch {
   rounds: RoundResult[] = [];
   winner: Side | "tie" | null = null;
   failedReason: string | null = null;
+  /** Amount-based wager. Populated at B-join via materialiseWager(). Null until then,
+   *  and null on legacy/pre-migration matches that fall back to symmetric bpsAtStake. */
+  wager: WagerSnapshot | null = null;
+  /** Creator's desired wager amount (decimal u64 string), if supplied at create.
+   *  Acts as an upper bound at B-join; otherwise stakeBps drives the math. */
+  desiredWagerAmountRaw: string | null = null;
 
   // Round flow: commit phase → reveal phase → judge.
   //
@@ -131,7 +139,7 @@ export class LiveMatch {
     return !this.playerB;
   }
 
-  joinAsB(wallet: string, streamId: string): void {
+  joinAsB(wallet: string, streamId: string, wager: WagerSnapshot | null): void {
     if (this.playerB) throw new Error("MATCH_FULL");
     if (wallet === this.playerA.wallet) throw new Error("CANNOT_SELF_MATCH");
     this.playerB = {
@@ -141,8 +149,22 @@ export class LiveMatch {
       graceTimer: null,
       effectiveBps: null,
       entitledLamports: null,
-      lockedTokenAmount: null,
+      // Pre-fill from the snapshot so the first hello-snapshot already shows
+      // the agreed-on wager; refreshEntitlements will overwrite with a live read.
+      lockedTokenAmount: wager?.lockedAtMatchTime.b ?? null,
     };
+    if (wager) {
+      // Pre-fill A's locked from the same snapshot for symmetry / first-render.
+      this.playerA.lockedTokenAmount = wager.lockedAtMatchTime.a;
+      this.wager = wager;
+      setWagerSnapshot(this.id, {
+        amountRaw: wager.amountRaw,
+        lockedA: wager.lockedAtMatchTime.a,
+        lockedB: wager.lockedAtMatchTime.b,
+        bpsIfALoses: wager.bpsIfALoses,
+        bpsIfBLoses: wager.bpsIfBLoses,
+      });
+    }
     setPlayerB(this.id, wallet, streamId, "creating");
     this.transition("creating", "b_joined");
     void this.refreshEntitlements();
@@ -386,16 +408,24 @@ export class LiveMatch {
 
     const winnerSlot = this.winner === "a" ? this.playerA : this.playerB!;
     const loserSlot = this.winner === "a" ? this.playerB! : this.playerA;
+
+    // Pick the bps for this exact outcome. When an amount-based wager snapshot
+    // is set (the new path), use its precomputed per-outcome bps so settlement
+    // never re-derives from drifted live data. When null (legacy / locked
+    // missing), fall back to the symmetric bpsAtStake intent.
+    const settleBps = this.wager
+      ? loserBpsFromSnapshot(this.wager, this.winner)
+      : this.bpsAtStake;
     const deltas: DeltaEntry[] = [
       {
         player: loserSlot.wallet,
         streamId: loserSlot.streamId,
-        deltaBps: -this.bpsAtStake,
+        deltaBps: -settleBps,
       },
       {
         player: winnerSlot.wallet,
         streamId: loserSlot.streamId, // bps moves WITHIN loser's stream
-        deltaBps: +this.bpsAtStake,
+        deltaBps: +settleBps,
       },
     ];
     setWinner(this.id, this.winner, deltas, "submitting");
@@ -790,6 +820,7 @@ export class LiveMatch {
       disputeWindowSec: this.disputeWindowSec,
       finalizeEligibleAt: this.endTs ? this.endTs + this.disputeWindowSec : null,
       bpsAtStake: this.bpsAtStake,
+      wager: this.wager,
       signatures: signaturesForSession(this.id),
       failedReason: this.failedReason,
     };
@@ -828,6 +859,10 @@ export function createLiveMatch(args: {
   playerAStream: string;
   bpsAtStake: number;
   disputeWindowSec: number;
+  /** Optional amount the creator wants to wager. Used as an upper bound at
+   *  B-join (clamped down to min(lockedA, lockedB)). When omitted, B-join
+   *  derives amount from `bpsAtStake × min(lockedA, lockedB) / 10000`. */
+  desiredWagerAmountRaw?: string;
 }): LiveMatch {
   const id = randomBytes(32).toString("hex"); // sessionIdHex doubles as matchId
   insertSession({
@@ -855,6 +890,7 @@ export function createLiveMatch(args: {
     },
     null,
   );
+  match.desiredWagerAmountRaw = args.desiredWagerAmountRaw ?? null;
   registry.set(id, match);
   // Eager fetch A's entitlement + token metadata so first snapshot has both.
   void match["refreshEntitlements"]();

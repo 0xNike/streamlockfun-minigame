@@ -77,7 +77,14 @@ export const CreateMatchBody = z.object({
   wallet: z.string().min(32).max(64),
   streamId: z.string().min(32).max(64),
   tokenMint: z.string().min(32).max(64).optional(),
+  // stakeBps is the "intent" — used for display and as the derivation source
+  // for amountRaw if the caller didn't pass one. Both null → server fills from
+  // config.STAKE_BPS.
   bpsAtStake: z.number().int().positive().max(10000).optional(),
+  // Caller may supply an absolute wager amount (BigInt-safe decimal string).
+  // If omitted, the server derives it at B-join from `bpsAtStake × min(locked)
+  // / 10000`. Validated at join time, never at create.
+  wagerAmountRaw: z.string().regex(/^\d+$/, "wagerAmountRaw must be a u64 decimal").optional(),
 });
 export type CreateMatchBody = z.infer<typeof CreateMatchBody>;
 
@@ -117,6 +124,23 @@ export type TokenMetaPublic = {
   imageUri: string | null;
 };
 
+/**
+ * Immutable record of an agreed-to wager. Populated at B-join time on amount-
+ * based matches; null on legacy / pre-migration matches that fall back to the
+ * symmetric `bpsAtStake` path. Mirrors `WagerSnapshot` in `wager.ts`.
+ */
+export type WagerSnapshotPublic = {
+  /** Absolute amount in raw u64 base units (BigInt-safe decimal string). */
+  amountRaw: string;
+  /** stakeBps used to derive amountRaw — kept for display ("this is a 10% match"). */
+  stakeBps: number;
+  /** Per-side lockedTokenAmount snapshot at agreement time. */
+  lockedAtMatchTime: { a: string; b: string };
+  /** Loser-bps for each outcome, precomputed (rounded up to keep winner credited). */
+  bpsIfALoses: number;
+  bpsIfBLoses: number;
+};
+
 export type MatchSnapshot = {
   matchId: string;
   state: MatchState;
@@ -131,7 +155,10 @@ export type MatchSnapshot = {
   endTs: number | null;
   disputeWindowSec: number;
   finalizeEligibleAt: number | null;
+  /** Stake intent in bps. Always populated. Display fallback when `wager` is null. */
   bpsAtStake: number;
+  /** Amount-based wager record, when both sides have lockedTokenAmount data. */
+  wager: WagerSnapshotPublic | null;
   signatures: { kind: TxKind; sig: string }[];
   failedReason: string | null;
 };

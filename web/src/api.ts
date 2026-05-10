@@ -38,6 +38,8 @@ export type ServerConfig = {
   tokenMeta: import("./types").TokenMetaPublic | null;
   stakeBps: number;
   disputeWindowSec: number;
+  /** Cohort tolerance band: matchmaking rejects pairings where larger / smaller > this. */
+  cohortMaxRatio: number;
   explorerCluster: "devnet" | "mainnet" | string;
   tokenEnv: "sol" | "soldev";
 };
@@ -61,6 +63,9 @@ export const api = {
     wallet: string;
     streamId: string;
     tokenMint?: string;
+    /** Optional absolute wager (raw u64 base units as a decimal string).
+     *  Server clamps to min(P1.locked, P2.locked) at B-join. */
+    wagerAmountRaw?: string;
   }): Promise<CreateMatchResponse> {
     const res = await fetch(`${BASE}/api/matches`, {
       method: "POST",

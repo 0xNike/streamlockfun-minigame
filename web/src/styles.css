@@ -114,6 +114,57 @@ button.link:hover:not(:disabled) { background: none; text-decoration: underline;
 .wager-compact { display: flex; align-items: center; gap: 12px; padding: 8px 14px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; font-size: 13px; flex-wrap: wrap; }
 .wager-compact strong { color: var(--text); }
 
+/* WagerInput — amount-first numeric input */
+.wager-input { margin-bottom: 16px; }
+.wager-input__field { display: grid; gap: 6px; }
+.wager-input__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 12px 4px 4px;
+}
+.wager-input__row:focus-within { outline: 2px solid var(--accent); outline-offset: -1px; }
+.wager-input__row input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  padding: 10px 8px;
+  font-family: ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.wager-input__row input:focus { outline: none; }
+.wager-input__row input[aria-invalid="true"] { color: var(--red); }
+.wager-input__suffix {
+  font-family: ui-monospace, monospace;
+  color: var(--dim);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.wager-input__hints { margin-top: 6px; min-height: 18px; line-height: 1.4; }
+
+/* PredictedWager — pre-join preview */
+.predicted {
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 12px 0;
+}
+.predicted__title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  margin-bottom: 6px;
+}
+.predicted__amount { font-size: 14px; line-height: 1.5; }
+.predicted--reject { border-color: var(--red); background: rgba(255, 93, 108, 0.05); }
+.predicted--reject .predicted__title { color: var(--red); }
+
 .stake-math { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
 .stake-math h3 { margin: 0 0 8px; }
 .stake-math p { margin: 4px 0; font-size: 14px; line-height: 1.5; }
@@ -237,6 +288,51 @@ button.link:hover:not(:disabled) { background: none; text-decoration: underline;
 .hold__sub { font-size: 13px; color: var(--text); margin: 8px auto 12px; max-width: 380px; line-height: 1.5; }
 .hold__bar { height: 6px; background: rgba(255, 181, 71, 0.12); border-radius: 999px; overflow: hidden; }
 .hold__bar-fill { height: 100%; background: var(--amber); border-radius: 999px; transition: width 0.5s linear; }
+.hold__safe { margin-top: 10px; font-size: 12px; color: var(--green); letter-spacing: 0.01em; }
+
+/* Pending payout summary — shown during dispute_wait + finalize + applying */
+.pending {
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 12px 0;
+}
+.pending__title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  margin-bottom: 8px;
+}
+.pending__row {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+  font-variant-numeric: tabular-nums;
+}
+.pending__row + .pending__row { border-top: 1px dashed var(--border); }
+.pending__sign { font-family: ui-monospace, monospace; font-weight: 700; font-size: 16px; }
+.pending__row--win .pending__sign { color: var(--green); }
+.pending__row--loss .pending__sign { color: var(--red); }
+.pending__amt { overflow-wrap: anywhere; }
+.pending__who { font-size: 12px; color: var(--dim); white-space: nowrap; }
+
+/* Top-level Solscan link during settlement — visible without opening disclosure */
+.settle__chain-link {
+  display: inline-block;
+  margin: 8px 0 12px;
+  padding: 8px 12px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--accent);
+  font-size: 13px;
+  text-decoration: none;
+}
+.settle__chain-link:hover { background: var(--border); text-decoration: underline; }
 .settle--cancel { border-color: var(--amber); }
 .settle--fail { border-color: var(--red); }
 .settle__sigs { margin-top: 12px; }
