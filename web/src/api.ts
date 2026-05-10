@@ -42,6 +42,8 @@ export type ServerConfig = {
   cohortMaxRatio: number;
   explorerCluster: "devnet" | "mainnet" | string;
   tokenEnv: "sol" | "soldev";
+  /** Absolute WS origin for direct connection (bypasses Vercel's HTTP-only rewrite). */
+  wsBase: string;
   /** World ID server config. `enabled: false` → don't show the verified-only toggle. */
   worldId:
     | {

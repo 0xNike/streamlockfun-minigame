@@ -108,17 +108,21 @@ export function Match() {
     }
   }
 
-  // Step 2: open WSS once we know our side.
+  // Step 2: open WSS once we know our side AND have the operator's wsBase from
+  // /api/config. The relative-path fallback in openWs would resolve to the FE
+  // origin (vercel.app), which Vercel's rewrite can't proxy for WebSocket —
+  // upgrades must connect directly to the operator host.
   useEffect(() => {
-    if (!matchId || role.kind !== "playing") return;
+    if (!matchId || role.kind !== "playing" || !cfg?.wsBase) return;
     const you = role.you;
-    const ws = openWs(`/ws/match/${matchId}?as=${you}`, (frame) => {
+    const url = `${cfg.wsBase.replace(/\/$/, "")}/ws/match/${matchId}?as=${you}`;
+    const ws = openWs(url, (frame) => {
       handleFrame(frame, you);
     });
     wsRef.current = ws;
     return () => ws.close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matchId, role.kind === "playing" ? role.you : null]);
+  }, [matchId, role.kind === "playing" ? role.you : null, cfg?.wsBase]);
 
   function handleFrame(frame: ServerFrame, youSide: Side) {
     switch (frame.type) {

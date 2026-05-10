@@ -193,6 +193,10 @@ export function registerMatchRoutes(app: FastifyInstance): void {
     cohortMaxRatio: config.COHORT_MAX_RATIO,
     explorerCluster: config.TOKEN_ENV === "sol" ? "mainnet" : "devnet",
     tokenEnv: config.TOKEN_ENV,
+    // Absolute WS base — must be the operator's own host, not the FE's. Vercel
+    // rewrites only proxy HTTP, so the WebSocket upgrade has to bypass the
+    // rewrite and go straight to the operator on Fly.
+    wsBase: config.PUBLIC_WS_URL,
     worldId: isWorldIdConfigured()
       ? {
           enabled: true,
