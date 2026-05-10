@@ -49,6 +49,13 @@ const Schema = z.object({
   WORLD_ENVIRONMENT: z.enum(["staging", "production"]).default("staging"),
   WORLD_SIGNING_KEY: z.string().optional(),
   WORLD_SESSION_SECRET: z.string().min(16).optional(),
+  // Cross-origin frontend. Set when the SPA is hosted on a different origin
+  // than this operator (e.g. *.vercel.app frontend → *.fly.dev backend). When
+  // set, CORS is enabled for that origin with `credentials: true` and the
+  // wid_session cookie switches to `SameSite=None; Secure` so it survives
+  // cross-site fetches. When omitted, the operator assumes same-origin (the
+  // Vite dev proxy case) and uses SameSite=Lax.
+  PUBLIC_FRONTEND_ORIGIN: z.string().url().optional(),
 });
 
 export const config = Schema.parse(process.env);

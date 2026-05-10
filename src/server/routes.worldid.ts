@@ -7,6 +7,7 @@
 
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { config } from "./config.js";
 import {
   SESSION_COOKIE,
   buildRpContext,
@@ -15,6 +16,27 @@ import {
   verifyAndBind,
   verifySession,
 } from "./worldid.js";
+
+// Cookie attributes shared between setCookie and clearCookie. Browsers ignore
+// a clearCookie whose attributes don't match the original — so this must stay
+// in sync between the two call sites.
+//
+// Cross-origin (PUBLIC_FRONTEND_ORIGIN set) → SameSite=None; Secure required.
+// Same-origin (Vite dev proxy) → SameSite=Lax; Secure only in production.
+function cookieOptions(): {
+  httpOnly: true;
+  sameSite: "lax" | "none";
+  secure: boolean;
+  path: "/";
+} {
+  const crossOrigin = !!config.PUBLIC_FRONTEND_ORIGIN;
+  return {
+    httpOnly: true,
+    sameSite: crossOrigin ? "none" : "lax",
+    secure: crossOrigin || process.env.NODE_ENV === "production",
+    path: "/",
+  };
+}
 
 const ContextBody = z.object({
   wallet: z.string().min(32).max(64),
@@ -86,11 +108,7 @@ export function registerWorldIdRoutes(app: FastifyInstance): void {
       });
     }
     reply.setCookie(SESSION_COOKIE, result.cookie, {
-      httpOnly: true,
-      sameSite: "lax",
-      // secure cookies require HTTPS — keep off in dev so localhost works.
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
+      ...cookieOptions(),
       expires: new Date(result.exp * 1000),
     });
     return reply.send({
@@ -119,7 +137,7 @@ export function registerWorldIdRoutes(app: FastifyInstance): void {
   });
 
   app.post("/api/worldid/logout", async (_req, reply) => {
-    reply.clearCookie(SESSION_COOKIE, { path: "/" });
+    reply.clearCookie(SESSION_COOKIE, cookieOptions());
     return reply.send({ ok: true });
   });
 }
