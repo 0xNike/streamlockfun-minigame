@@ -1,0 +1,16 @@
+node_modules
+dist
+operator.sqlite
+operator.sqlite-shm
+operator.sqlite-wal
+.env
+.env.local
+.env.*.local
+web/
+.git
+.github
+.vscode
+.idea
+*.log
+README.md
+LICENSE

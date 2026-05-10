@@ -11,7 +11,8 @@
     "server": "tsx watch src/server/index.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p .",
-    "start": "node dist/main.js"
+    "start": "node dist/server/index.js",
+    "postinstall": "node scripts/patch-sdk.mjs"
   },
   "engines": {
     "node": ">=18"
@@ -20,7 +21,7 @@
     "@fastify/cookie": "^9.4.0",
     "@fastify/websocket": "^10.0.1",
     "@solana/web3.js": "^1.95.0",
-    "@streamlock/operator-sdk": "file:../streamlockfun/packages/operator-sdk",
+    "@streamlock/operator-sdk": "file:./vendor/streamlock-operator-sdk-0.1.4.tgz",
     "@worldcoin/idkit-core": "^4.1.4",
     "better-sqlite3": "^11.3.0",
     "dotenv": "^16.4.5",
