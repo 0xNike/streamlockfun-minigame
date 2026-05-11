@@ -8,6 +8,29 @@ The game is best-of-three Rock-Paper-Scissors with commit-reveal, World ID sybil
 
 ---
 
+## Gameplay
+
+**Stakes are real but bounded.** Each player wagers an amount of the game token (`$TICKET` in the live deployment). The token is *streamed*, not held — it lives in a Streamlock entitlement ledger, which means winning shifts the loser's stream by some bps (basis points) toward the winner. No transfers, no approvals, no token accounts to set up; it's a single on-chain settlement at the end of the match.
+
+**A match flow:**
+
+1. **Create.** Player A connects their wallet, picks one of their streams on the token, sets a wager amount and (optionally) toggles "Verified humans only" to require World ID. A shareable match URL is generated.
+2. **Join.** Player B visits the URL, connects a wallet, picks their stream. If verified-only is on, they're routed through World ID first (staging = simulator app; production = real World App orb-or-phone verification). A shared match snapshot is locked in: `min(lockedA, lockedB)` × stakeBps caps the prize so neither side can over-promise.
+3. **Play.** Best-of-three RPS over a WebSocket. Each round has two phases (defaults; configurable in `src/server/config.ts`):
+   - **Commit (45s):** each browser hashes `sha256(move:nonce)` and sends the hash. Neither the operator nor your opponent learns your move.
+   - **Reveal (15s):** once both commits are in, the operator broadcasts `commits_locked` and both clients auto-reveal `(move, nonce)`. The operator verifies each reveal matches its prior commit before judging.
+   
+   A missing/late commit forfeits that round to the other side. A reveal whose hash doesn't match the earlier commit is treated as a forfeit (and logged as a cheat attempt — the commit hash is in the DB). A green/red flash gives the winner/loser of each round quick feedback.
+4. **Settle.** After three rounds, the operator computes the winner, picks the bps-shift for the actual outcome (the wager snapshot stores per-outcome bps so settlement never re-derives from drifted live data), and runs the on-chain sequence: `submit deltas → wait dispute window → finalize → apply`. The dispute window defaults to 30s on Fly (`fly.toml`). Players see each transaction with a live "pending → confirmed" tag and a Solscan link.
+
+**Anti-grief and anti-cheat properties this gets you for free:**
+
+- *Move secrecy.* Commit-reveal means the operator can't peek at your move and tell your opponent (or front-run a settlement). It's verifiable client-side: the commit hash is broadcast to both players before either reveals.
+- *No double-spend.* Stakes are bounded by `min(lockedA, lockedB)` and locked into a session PDA at match start; the only outcomes are "loser's bps → winner" or "cancel and walk away" (on ties or operator-side failures).
+- *Sybil resistance.* `verifiedOnly` matches reject the same World ID nullifier on both sides, so one human can't farm both seats.
+- *Crash recovery.* The operator state machine is in-process, but every transition writes a SQLite row. On restart, the reconciler marks abandoned mid-flight matches `failed` so neither party is left holding an active PDA forever.
+- *Dispute window.* Every settlement has a (configurable, default 30s mainnet) window where deltas are *submitted* but not yet *applied* — gives an out-of-band dispute path if the chain ever needs one. The operator only calls `apply` after the window elapses.
+
 ## Architecture
 
 ```
