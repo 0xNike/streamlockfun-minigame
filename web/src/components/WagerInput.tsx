@@ -126,6 +126,11 @@ export function WagerInput({
 function defaultDisplay(amountRaw: string, decimals: number | null): string {
   const big = safeBigInt(amountRaw);
   if (big === null) return "";
+  // When decimals is unknown (token meta not loaded yet), the field holds raw
+  // base units as a plain integer. Emit it directly — formatToken would
+  // annotate it as "12,345 base units", which isn't a parseable input value
+  // and trips the "Enter a positive amount" error on auto-fill.
+  if (decimals === null || decimals === undefined) return big.toString();
   const formatted = formatToken(big, decimals, null);
   if (formatted === null) return "";
   return formatted.replace(/,/g, "");
