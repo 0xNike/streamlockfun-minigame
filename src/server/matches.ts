@@ -471,13 +471,14 @@ export class LiveMatch {
       this.transition("applying", "finalize_done");
       // applySigs already broadcast as confirmed via runChainOp.
       this.transition("done", "apply_done");
+      const cluster = config.TOKEN_ENV === "sol" ? "mainnet" : "devnet";
       this.broadcast({
         type: "done",
         ts: nowSec(),
         winner: this.winner!,
         finalSignatures: signaturesForSession(this.id),
         explorerLinks: signaturesForSession(this.id).map(
-          (s) => `https://solscan.io/tx/${s.sig}?cluster=devnet`,
+          (s) => `https://solscan.io/tx/${s.sig}?cluster=${cluster}`,
         ),
       });
       this.log.info({ finalizeSigs, applySigs }, "match.done");
