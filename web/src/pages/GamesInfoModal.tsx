@@ -38,9 +38,9 @@ export function GamesInfoModal() {
         type="button"
         onClick={() => setOpen(true)}
         aria-label="How Streamlock games work"
-        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+        className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-zinc-700 bg-zinc-900 text-zinc-400 transition-colors hover:border-zinc-600 hover:bg-zinc-800 hover:text-zinc-100"
       >
-        <HelpCircle className="h-5 w-5" />
+        <HelpCircle className="h-4 w-4" />
       </button>
 
       {open && (

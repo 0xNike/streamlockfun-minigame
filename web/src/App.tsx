@@ -1,4 +1,5 @@
-import { Route, Routes, Link } from "react-router-dom";
+import { useEffect } from "react";
+import { Route, Routes, Link, useLocation } from "react-router-dom";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { Explore } from "./pages/Explore";
 import { Home } from "./pages/Home";
@@ -34,6 +35,17 @@ function StreamlockLogo({ className }: { className?: string }) {
 }
 
 export function App() {
+  // The Games hub (/) is black-themed; the RPS game pages stay light. Toggle a
+  // theme flag on <html> so the page background (set in styles.css) follows the
+  // route rather than every page inheriting the light game palette.
+  const { pathname } = useLocation();
+  const isHub = pathname === "/";
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle("theme-dark", isHub);
+    return () => root.classList.remove("theme-dark");
+  }, [isHub]);
+
   return (
     <WorldIdProvider>
       <div className="app">

@@ -1,3 +1,53 @@
 @tailwind base;
+
+/* Tailwind Preflight is disabled globally (see tailwind.config) so its reset
+   can't disturb the hand-written light-theme CSS in styles.css. The casualty is
+   that `border-*` width utilities are no-ops without a default `border-style`,
+   which Preflight normally supplies — so every border on the Games hub silently
+   vanished. Re-introduce just that border normalization, scoped to `.games-hub`,
+   inside @layer base so utility classes (border-zinc-800, border-white/10, …)
+   still win on width and color. */
+@layer base {
+  .games-hub *,
+  .games-hub ::before,
+  .games-hub ::after {
+    border-width: 0;
+    border-style: solid;
+    border-color: theme("colors.zinc.800");
+  }
+
+  /* Preflight also normalizes form controls. Without it, a <button> keeps its
+     user-agent appearance — a white system-button background — and the native
+     button box collapses flex children (the help icon rendered 0px wide). These
+     are the essentials Preflight provides, scoped to the hub so the light game
+     pages stay untouched. Color/background utilities (bg-emerald-500, …) live in
+     the utilities layer and still win. */
+  .games-hub button,
+  .games-hub [type="button"],
+  .games-hub [type="submit"],
+  .games-hub [type="reset"] {
+    appearance: none;
+    -webkit-appearance: none;
+    background-color: transparent;
+    background-image: none;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  .games-hub svg {
+    display: block;
+  }
+
+  /* Preflight resets anchors to inherit decoration/color; without it the entire
+     <Link>-wrapped game card renders underlined. Let utilities drive link color
+     and decoration instead. */
+  .games-hub a {
+    color: inherit;
+    text-decoration: inherit;
+  }
+}
+
 @tailwind components;
 @tailwind utilities;

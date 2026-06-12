@@ -44,6 +44,33 @@ html, body, #root {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* The Games hub (/) is a full-black surface. The light palette above is for the
+   RPS game pages only — App toggles `theme-dark` on <html> for the hub route. */
+html.theme-dark { color-scheme: dark; }
+html.theme-dark,
+html.theme-dark body,
+html.theme-dark #root {
+  background: #000;
+}
+
+/* The hub is a wide layout (the narrow 760px column is for the RPS game). */
+html.theme-dark .app {
+  max-width: 1200px;
+}
+
+/* Header: on the black hub, drop the navy "anchor strip" look for a clean
+   near-black bar that sits quietly on the page. The navy strip stays on the
+   light game pages, where it intentionally bridges back to the parent app. */
+html.theme-dark .header {
+  background: #0b0b0d;
+  border: 1px solid #1d1d20;
+  box-shadow: none;
+}
+html.theme-dark .brand__pill {
+  background: #10b981; /* emerald — matches the hub's accent */
+  color: #06140d;
+}
+
 .app { max-width: 760px; margin: 0 auto; padding: 24px 16px 80px; }
 
 /* ───────── Header (dark anchor strip) ─────────
