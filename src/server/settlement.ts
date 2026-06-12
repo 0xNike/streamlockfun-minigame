@@ -189,21 +189,67 @@ export async function createSession(args: {
   }
 }
 
+function isAlreadyInUse(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return ALREADY_IN_USE_RE.test(msg);
+}
+
 export async function submitDeltas(args: {
   sessionId: string;
   pda: string;
   deltas: DeltaEntry[];
   broadcast: BroadcastFn;
 }): Promise<string> {
-  const out = (await runChainOp({
-    sessionId: args.sessionId,
-    kind: "submit",
-    broadcast: args.broadcast,
-    maxAttempts: 3,
-    fn: () => op.sessions.submit(args.pda, { startChunkIndex: 0, deltas: args.deltas }),
-    extractSigs: (out) => [(out as { signature: string }).signature],
-  })) as { signature: string };
-  return out.signature;
+  try {
+    const out = (await runChainOp({
+      sessionId: args.sessionId,
+      kind: "submit",
+      broadcast: args.broadcast,
+      maxAttempts: 3,
+      // Only retry transient confirmation failures. "block height exceeded"
+      // can fire even when the tx actually landed (lost confirmation); on retry
+      // we hit the already-in-use case below and treat it as success. Without
+      // this filter the default retried ALL errors, turning a landed-but-
+      // unconfirmed submit into a hard failure on the "already in use" retry.
+      isRetryable: (err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        return (
+          msg.includes("block height exceeded") ||
+          msg.includes("expired") ||
+          msg.includes("fetch failed") ||
+          msg.includes("timeout") ||
+          msg.includes("ECONN") ||
+          msg.includes("503") ||
+          msg.includes("502")
+        );
+      },
+      fn: () => op.sessions.submit(args.pda, { startChunkIndex: 0, deltas: args.deltas }),
+      extractSigs: (out) => [(out as { signature: string }).signature],
+    })) as { signature: string };
+    return out.signature;
+  } catch (err) {
+    // "Allocate: account ... already in use" on SubmitResults means a prior
+    // attempt's tx actually landed (confirmation was lost and we retried). The
+    // results account exists on-chain → submit is done. Treat as success so
+    // settlement proceeds to finalize, rather than failing an already-recorded
+    // (and paid-for) match. Mirrors recoverFromAlreadyInUse for create.
+    if (isAlreadyInUse(err)) {
+      logger.warn(
+        { sessionId: args.sessionId },
+        "settlement.submit_recovered_already_submitted",
+      );
+      args.broadcast({
+        type: "tx",
+        ts: nowSec(),
+        kind: "submit",
+        attempt: 0,
+        status: "confirmed",
+        sig: "recovered_via_chain_read",
+      });
+      return "recovered_via_chain_read";
+    }
+    throw err;
+  }
 }
 
 export async function finalizeAndApply(args: {
