@@ -692,6 +692,15 @@ button.link:hover:not(:disabled) {
 }
 .settle__sigs-list a:hover { text-decoration: underline; }
 
+/* Technical details — persistent per-step on-chain record after settlement */
+.tech-details__hint { margin-top: 8px; }
+.tech-details .settle__sigs-list { flex-direction: column; gap: 6px; }
+.tech-details__step {
+  color: var(--text);
+  font-family: inherit;
+  font-weight: 600;
+}
+
 /* Match-end CTAs */
 .cta { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
 .cta__row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; justify-content: center; }

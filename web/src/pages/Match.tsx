@@ -15,7 +15,7 @@ import type {
 } from "../types";
 import { MoveButtons } from "../components/MoveButtons";
 import { RoundList } from "../components/RoundList";
-import { SettlementProgress } from "../components/SettlementProgress";
+import { SettlementProgress, TechnicalDetails } from "../components/SettlementProgress";
 import { MatchHeader } from "../components/MatchHeader";
 import { Outcome } from "../components/Outcome";
 import { Wager } from "../components/Wager";
@@ -421,11 +421,18 @@ export function Match() {
         snap.state !== "partnered" &&
         snap.state !== "creating" &&
         snap.state !== "done" && (
-          <SettlementProgress snap={snap} you={you} txEvents={txEvents} />
+          <SettlementProgress snap={snap} you={you} txEvents={txEvents} cluster={cfg?.explorerCluster ?? "mainnet"} />
         )}
 
       {(snap.state === "done" || snap.state === "cancelled" || snap.state === "failed") && (
         <MatchEndCTA snap={snap} you={you} matchId={matchId} />
+      )}
+
+      {snap.state === "done" && (
+        <TechnicalDetails
+          signatures={snap.signatures}
+          cluster={cfg?.explorerCluster ?? "mainnet"}
+        />
       )}
     </div>
   );

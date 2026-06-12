@@ -11,8 +11,8 @@ interface TxEvent {
   ts: number;
 }
 
-function explorer(sig: string) {
-  return `https://solscan.io/tx/${sig}?cluster=devnet`;
+function explorer(sig: string, cluster: string) {
+  return `https://solscan.io/tx/${sig}?cluster=${cluster}`;
 }
 
 function fmtClock(sec: number): string {
@@ -55,10 +55,13 @@ export function SettlementProgress({
   snap,
   you,
   txEvents,
+  cluster,
 }: {
   snap: MatchSnapshot;
   you: Side | null;
   txEvents: TxEvent[];
+  /** Solana cluster for explorer links. Read from /api/config.explorerCluster. */
+  cluster: string;
 }) {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
@@ -83,7 +86,7 @@ export function SettlementProgress({
         <div className="dim small">
           No funds will move. Any setup costs are refunded automatically.
         </div>
-        <SigDisclosure txEvents={txEvents} />
+        <SigDisclosure txEvents={txEvents} cluster={cluster} />
       </div>
     );
   }
@@ -96,7 +99,7 @@ export function SettlementProgress({
           {snap.failedReason ??
             "Settlement failed. Reach out to support and we'll sort it out."}
         </div>
-        <SigDisclosure txEvents={txEvents} />
+        <SigDisclosure txEvents={txEvents} cluster={cluster} />
       </div>
     );
   }
@@ -165,7 +168,7 @@ export function SettlementProgress({
       {submitSig && (
         <a
           className="settle__chain-link"
-          href={explorer(submitSig)}
+          href={explorer(submitSig, cluster)}
           target="_blank"
           rel="noreferrer"
         >
@@ -187,7 +190,7 @@ export function SettlementProgress({
         })}
       </div>
 
-      <SigDisclosure txEvents={txEvents} />
+      <SigDisclosure txEvents={txEvents} cluster={cluster} />
     </div>
   );
 }
@@ -269,7 +272,56 @@ function latestConfirmedSig(txEvents: TxEvent[], kind: TxKind): string | null {
   return best?.sig ?? null;
 }
 
-function SigDisclosure({ txEvents }: { txEvents: TxEvent[] }) {
+const TX_STEP_LABELS: Record<TxKind, string> = {
+  create: "Match session created",
+  submit: "Result recorded on-chain",
+  finalize: "Result finalized",
+  apply: "Payout applied",
+  cancel: "Match cancelled",
+};
+
+/**
+ * Persistent on-chain record shown after a match settles (done state). Unlike
+ * the live SigDisclosure (driven by transient ws tx events), this reads the
+ * snapshot's `signatures` — so the hashes stay viewable/verifiable after payout
+ * and across reloads. One row per settlement step with a Solscan link.
+ */
+export function TechnicalDetails({
+  signatures,
+  cluster,
+}: {
+  signatures: { kind: TxKind; sig: string }[];
+  cluster: string;
+}) {
+  const rows = signatures.filter(
+    (s) => s.sig && s.sig !== "recovered_via_chain_read",
+  );
+  if (rows.length === 0) return null;
+  return (
+    <details className="settle__sigs tech-details">
+      <summary>Technical details</summary>
+      <div className="tech-details__hint dim small">
+        On-chain transactions for this match — open any to verify on Solscan.
+      </div>
+      <div className="settle__sigs-list">
+        {rows.map(({ kind, sig }) => (
+          <a
+            key={`${kind}-${sig}`}
+            href={explorer(sig, cluster)}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <span className="tech-details__step">{TX_STEP_LABELS[kind] ?? kind}</span>
+            {" — "}
+            {sig.slice(0, 8)}…{sig.slice(-6)} ↗
+          </a>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function SigDisclosure({ txEvents, cluster }: { txEvents: TxEvent[]; cluster: string }) {
   const sigs: string[] = [];
   for (const ev of txEvents) {
     if (ev.status === "confirmed" && ev.sig && !sigs.includes(ev.sig)) sigs.push(ev.sig);
@@ -280,7 +332,7 @@ function SigDisclosure({ txEvents }: { txEvents: TxEvent[] }) {
       <summary>All on-chain transactions ({sigs.length})</summary>
       <div className="settle__sigs-list">
         {sigs.map((sig) => (
-          <a key={sig} href={explorer(sig)} target="_blank" rel="noreferrer">
+          <a key={sig} href={explorer(sig, cluster)} target="_blank" rel="noreferrer">
             {sig.slice(0, 8)}…{sig.slice(-6)} ↗
           </a>
         ))}
