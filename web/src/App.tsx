@@ -1,5 +1,6 @@
 import { Route, Routes, Link } from "react-router-dom";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
+import { Explore } from "./pages/Explore";
 import { Home } from "./pages/Home";
 import { Match } from "./pages/Match";
 import { WorldIdProvider } from "./worldid";
@@ -39,18 +40,24 @@ export function App() {
         <header className="header">
           <Link to="/" className="brand">
             <StreamlockLogo className="brand__logo" />
-            <span className="brand__pill">Mini Game</span>
+            <span className="brand__pill">Games</span>
           </Link>
-          <WalletMultiButton />
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <a className="dim" href="https://app.streamlock.fun" style={{ fontSize: "0.85rem" }}>
+              Open app
+            </a>
+            <WalletMultiButton />
+          </div>
         </header>
         <main>
           <Routes>
-            <Route path="/" element={<Home />} />
+            <Route path="/" element={<Explore />} />
+            <Route path="/rps" element={<Home />} />
             <Route path="/match/:id" element={<Match />} />
           </Routes>
         </main>
         <footer className="footer">
-          <span className="dim">Stake 10% of the loser's stream per match · Best of 3</span>
+          <span className="dim">On-chain games built on Streamlock</span>
         </footer>
       </div>
     </WorldIdProvider>
