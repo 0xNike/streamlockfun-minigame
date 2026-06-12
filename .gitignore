@@ -30,3 +30,7 @@ operator.json
 
 # MCP server config — contains API credentials
 .mcp.json
+.vercel
+
+# Local, per-developer Claude Code settings (permissions allowlist)
+.claude/settings.local.json
