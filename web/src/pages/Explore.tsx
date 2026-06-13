@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { BadgeCheck } from "lucide-react";
-import { GamesInfoModal } from "./GamesInfoModal";
 
 type GameStatus = "live" | "beta" | "coming-soon";
 
@@ -144,12 +143,9 @@ function Section({ children, className }: { children: ReactNode; className?: str
 export function Explore() {
   return (
     <div className="games-hub px-5 py-10 md:px-8 md:py-12">
-      <div className="flex items-center gap-2">
-        <h1 className="text-3xl font-semibold tracking-tight text-zinc-100 md:text-4xl">
-          Games
-        </h1>
-        <GamesInfoModal />
-      </div>
+      <h1 className="text-3xl font-semibold tracking-tight text-zinc-100 md:text-4xl">
+        Games
+      </h1>
 
       <div className="mt-8 space-y-12 md:space-y-16">
         <Section>

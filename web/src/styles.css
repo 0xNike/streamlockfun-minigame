@@ -70,6 +70,16 @@ html.theme-dark .brand__pill {
   background: #10b981; /* emerald — matches the hub's accent */
   color: #06140d;
 }
+/* One confident accent per surface: on the hub, the primary action (wallet)
+   goes emerald to match the GAMES pill instead of fighting it with the parent
+   app's indigo. The light game pages keep indigo (the global rules below). */
+html.theme-dark .wallet-adapter-button-trigger {
+  background: #10b981 !important;
+  color: #06140d !important;
+}
+html.theme-dark .wallet-adapter-button-trigger:not([disabled]):hover {
+  background: #0ea372 !important;
+}
 
 .app { max-width: 760px; margin: 0 auto; padding: 24px 16px 80px; }
 
@@ -107,6 +117,36 @@ html.theme-dark .brand__pill {
   padding: 4px 10px;
   border-radius: 999px;
   line-height: 1;
+}
+
+/* Right-hand nav cluster: quiet text links ("How it works", "Open app") that
+   sit on the dark header in both themes, leading up to the primary wallet
+   button. `.header__link` is also a reset — the "How it works" trigger is a
+   <button>, and with Preflight off it would otherwise inherit the user-agent
+   button chrome (it's excluded from the game-button styling further down). */
+.header__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 18px;
+}
+.header__link {
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+  font: inherit;
+  font-size: 0.85rem;
+  line-height: 1;
+  color: var(--anchor-dim);
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.header__link:hover {
+  color: #ffffff;
 }
 
 /* Long on-chain identifiers (wallets, mints, stream ids, signatures, share URLs)
@@ -239,7 +279,12 @@ input:focus, select:focus {
 }
 .picker, .picker__single, .picker__empty { font-size: 16px; }
 
-button {
+/* The Games hub is Tailwind-styled on a dark theme; `:where(:not(.games-hub *):not(.header__link))`
+   keeps these light-theme button rules off hub buttons without changing their
+   specificity for every other (game-page) button. Otherwise this hover rule
+   (specificity 0,2,1) outranks Tailwind's `hover:bg-*` utilities (0,2,0) and the
+   hub's (?) help button flashes a light cream background on hover. */
+button:where(:not(.games-hub *):not(.header__link)) {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -251,9 +296,9 @@ button {
   transition: background .15s, border-color .15s, transform .05s, box-shadow .15s;
   box-shadow: var(--shadow-sm);
 }
-button:hover:not(:disabled) { background: var(--panel2); border-color: #C9C7BD; }
-button:active:not(:disabled) { transform: translateY(1px); }
-button:disabled { opacity: 0.5; cursor: not-allowed; }
+button:where(:not(.games-hub *):not(.header__link)):hover:not(:disabled) { background: var(--panel2); border-color: #C9C7BD; }
+button:where(:not(.games-hub *):not(.header__link)):active:not(:disabled) { transform: translateY(1px); }
+button:where(:not(.games-hub *):not(.header__link)):disabled { opacity: 0.5; cursor: not-allowed; }
 button.primary {
   background: var(--accent);
   border-color: var(--accent);

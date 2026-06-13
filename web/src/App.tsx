@@ -4,6 +4,7 @@ import { Explore } from "./pages/Explore";
 import { Home } from "./pages/Home";
 import { Match } from "./pages/Match";
 import { WorldIdProvider } from "./worldid";
+import { GamesInfoModal } from "./pages/GamesInfoModal";
 import { useWalletAddress } from "./useWalletAddress";
 
 // Connect / account control for the header. Replaces the Solana wallet
@@ -86,12 +87,13 @@ export function App() {
             <StreamlockLogo className="brand__logo" />
             <span className="brand__pill">Games</span>
           </Link>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-            <a className="dim" href="https://app.streamlock.fun" style={{ fontSize: "0.85rem" }}>
+          <nav className="header__actions">
+            <GamesInfoModal />
+            <a className="header__link" href="https://app.streamlock.fun">
               Open app
             </a>
             <WalletButton />
-          </div>
+          </nav>
         </header>
         <main>
           <Routes>

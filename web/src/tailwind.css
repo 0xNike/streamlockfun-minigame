@@ -22,10 +22,16 @@
      are the essentials Preflight provides, scoped to the hub so the light game
      pages stay untouched. Color/background utilities (bg-emerald-500, …) live in
      the utilities layer and still win. */
-  .games-hub button,
-  .games-hub [type="button"],
-  .games-hub [type="submit"],
-  .games-hub [type="reset"] {
+  /* `:where(.games-hub)` keeps this scoped to the hub but contributes ZERO
+     specificity (like Preflight's element-only resets), so it stays at (0,0,1)
+     and the hub's color/background utilities (bg-zinc-900, text-zinc-400, …)
+     still win at rest. With the plain `.games-hub button` selector this was
+     (0,1,1) and silently overrode those single-class utilities — the (?) help
+     icon then inherited the light theme's navy text on the black hub. */
+  :where(.games-hub) button,
+  :where(.games-hub) [type="button"],
+  :where(.games-hub) [type="submit"],
+  :where(.games-hub) [type="reset"] {
     appearance: none;
     -webkit-appearance: none;
     background-color: transparent;

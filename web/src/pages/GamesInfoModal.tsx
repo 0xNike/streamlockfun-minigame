@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { HelpCircle, X } from "lucide-react";
+import { X } from "lucide-react";
 
 const POINTS = [
   {
@@ -37,15 +37,17 @@ export function GamesInfoModal() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        aria-label="How Streamlock games work"
-        className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-zinc-700 bg-zinc-900 text-zinc-400 transition-colors hover:border-zinc-600 hover:bg-zinc-800 hover:text-zinc-100"
+        className="header__link"
       >
-        <HelpCircle className="h-4 w-4" />
+        How it works
       </button>
 
       {open && (
+        // `games-hub` re-applies the Preflight-substitute resets (border-style,
+        // button normalization) the modal relies on — needed now that the trigger
+        // lives in the global nav and the overlay mounts outside the hub page.
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+          className="games-hub fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
           onClick={() => setOpen(false)}
         >
           <div
