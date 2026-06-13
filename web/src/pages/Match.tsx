@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useWallet } from "@solana/wallet-adapter-react";
 import { useParams } from "react-router-dom";
+import { useWalletAddress } from "../useWalletAddress";
 import { api, type ServerConfig } from "../api";
 import { openWs, type WsClient } from "../ws";
 import { commitHash, newNonce } from "../crypto";
@@ -41,7 +41,7 @@ type Role =
 
 export function Match() {
   const { id: matchId } = useParams<{ id: string }>();
-  const { publicKey } = useWallet();
+  const { address: wallet } = useWalletAddress();
 
   const [role, setRole] = useState<Role>({ kind: "loading" });
   const [snap, setSnap] = useState<MatchSnapshot | null>(null);
@@ -61,7 +61,6 @@ export function Match() {
   // tab's memory — a hard refresh between commit and reveal is treated as a
   // no-reveal forfeit by the server (same as ghosting after committing).
   const secretsRef = useRef<Map<number, { move: Move; nonce: string }>>(new Map());
-  const wallet = publicKey?.toBase58() ?? null;
   const verified = useIsWalletVerified(wallet);
 
   useEffect(() => {

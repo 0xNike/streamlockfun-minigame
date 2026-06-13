@@ -24,7 +24,8 @@ export default defineConfig({
   },
   assetsInclude: ["**/*.wasm"],
   define: {
-    // wallet-adapter packages reference these globals
+    // Privy's Solana deps (@solana/kit, wallet-standard connectors) reference
+    // these Node-style globals in the browser build.
     "process.env.NODE_ENV": JSON.stringify(process.env.NODE_ENV ?? "development"),
     global: "globalThis",
   },

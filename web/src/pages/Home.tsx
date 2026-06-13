@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { useWallet } from "@solana/wallet-adapter-react";
 import { useNavigate } from "react-router-dom";
+import { useWalletAddress } from "../useWalletAddress";
 import { api, type ServerConfig } from "../api";
 import { Wager } from "../components/Wager";
 import { StreamPicker } from "../components/StreamPicker";
@@ -14,7 +14,7 @@ interface PickedStream {
 }
 
 export function Home() {
-  const { publicKey } = useWallet();
+  const { address: wallet } = useWalletAddress();
   const navigate = useNavigate();
   const [code, setCode] = useState("");
   const [picked, setPicked] = useState<PickedStream | null>(null);
@@ -23,7 +23,6 @@ export function Home() {
   const [err, setErr] = useState<string | null>(null);
   const [cfg, setCfg] = useState<ServerConfig | null>(null);
   const [verifiedOnly, setVerifiedOnly] = useState(false);
-  const wallet = publicKey?.toBase58() ?? null;
   const verified = useIsWalletVerified(wallet);
   const { logout } = useWorldId();
 
@@ -47,7 +46,7 @@ export function Home() {
   }, [cfg, picked?.lockedTokenAmount]);
 
   async function createMatch() {
-    if (!publicKey) {
+    if (!wallet) {
       setErr("Connect a wallet first");
       return;
     }
@@ -58,9 +57,8 @@ export function Home() {
     setBusy(true);
     setErr(null);
     try {
-      const walletBase58 = publicKey.toBase58();
       const { matchId } = await api.createMatch({
-        wallet: walletBase58,
+        wallet,
         streamId: picked.streamId,
         wagerAmountRaw: wagerResult.status === "ok" ? wagerResult.amountRaw : undefined,
         verifiedOnly,
@@ -111,7 +109,7 @@ export function Home() {
       )}
       <div className="card">
         <h1>Create a match</h1>
-        {!publicKey && <p className="dim">Connect your wallet to begin.</p>}
+        {!wallet && <p className="dim">Connect your wallet to begin.</p>}
         <div className="form">
           <label>
             <span className="form__label">Your stream</span>

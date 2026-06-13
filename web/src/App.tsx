@@ -1,10 +1,42 @@
 import { useEffect } from "react";
 import { Route, Routes, Link, useLocation } from "react-router-dom";
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { Explore } from "./pages/Explore";
 import { Home } from "./pages/Home";
 import { Match } from "./pages/Match";
 import { WorldIdProvider } from "./worldid";
+import { useWalletAddress } from "./useWalletAddress";
+
+// Connect / account control for the header. Replaces the Solana wallet
+// adapter's <WalletMultiButton/>: connected → short address that logs out on
+// click; disconnected → opens the Privy login modal (external wallet, email,
+// or Google). Uses currentColor so it themes correctly on both the dark hub
+// and the light game pages.
+function WalletButton() {
+  const { address, connected, ready, login, logout } = useWalletAddress();
+  const style: React.CSSProperties = {
+    fontSize: "0.85rem",
+    fontWeight: 600,
+    padding: "0.4rem 0.85rem",
+    borderRadius: 999,
+    border: "1px solid currentColor",
+    background: "transparent",
+    color: "inherit",
+    cursor: "pointer",
+    fontFamily: "inherit",
+  };
+  if (!ready) {
+    return <button style={{ ...style, opacity: 0.5, cursor: "default" }} disabled>…</button>;
+  }
+  if (!connected || !address) {
+    return <button style={style} onClick={() => login()}>Connect</button>;
+  }
+  const short = `${address.slice(0, 4)}…${address.slice(-4)}`;
+  return (
+    <button style={style} onClick={() => void logout()} title={`${address} — click to disconnect`}>
+      {short}
+    </button>
+  );
+}
 
 // Streamlock wordmark, copied from streamlockfun/public/Streamlock Full - White Logo.svg.
 // Inlined (rather than <img src>) so the fill picks up `currentColor` and the
@@ -58,7 +90,7 @@ export function App() {
             <a className="dim" href="https://app.streamlock.fun" style={{ fontSize: "0.85rem" }}>
               Open app
             </a>
-            <WalletMultiButton />
+            <WalletButton />
           </div>
         </header>
         <main>

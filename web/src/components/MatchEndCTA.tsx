@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useWallet } from "@solana/wallet-adapter-react";
+import { useWalletAddress } from "../useWalletAddress";
 import { api } from "../api";
 import type { MatchSnapshot, Side } from "../types";
 
@@ -14,8 +14,7 @@ export function MatchEndCTA({
   matchId: string;
 }) {
   const navigate = useNavigate();
-  const { publicKey } = useWallet();
-  const wallet = publicKey?.toBase58() ?? null;
+  const { address: wallet } = useWalletAddress();
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);

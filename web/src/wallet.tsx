@@ -1,45 +1,65 @@
 /**
- * Wallet adapter provider. Reads the target cluster from /api/config so the
- * wallet's balance display and tx simulation hit the same chain the operator
- * is running against. Defaults to mainnet during the brief loading window;
- * the operator's settlement path is the source of truth either way.
+ * Wallet provider. Wraps the app in Privy so players can connect an external
+ * Solana wallet (Phantom, Backpack, …) OR log in with email/Google and get a
+ * Privy-managed embedded Solana wallet auto-provisioned for them.
+ *
+ * The minigame never builds or sends transactions from the browser — the
+ * operator server settles every match on-chain with its own keypair, and the
+ * frontend only ever needs the connected wallet's address (see
+ * `useWalletAddress`). That keeps this integration identity-only: no signing
+ * surface to wire up here.
+ *
+ * Both Solana clusters are registered statically below. Those RPCs only back
+ * Privy's balance display / standard-sign hooks, neither of which this app
+ * uses, so we don't need to read /api/config to pick one — registering both
+ * avoids re-mounting the provider (and dropping auth state) on a cluster swap.
  */
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ConnectionProvider, WalletProvider } from "@solana/wallet-adapter-react";
-import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
-import { PhantomWalletAdapter } from "@solana/wallet-adapter-wallets";
-import { clusterApiUrl } from "@solana/web3.js";
-import { api } from "./api";
-import "@solana/wallet-adapter-react-ui/styles.css";
+import { type ReactNode } from "react";
+import { PrivyProvider } from "@privy-io/react-auth";
+import { toSolanaWalletConnectors } from "@privy-io/react-auth/solana";
+import { createSolanaRpc, createSolanaRpcSubscriptions } from "@solana/kit";
 
-type Cluster = "mainnet-beta" | "devnet";
+const APP_ID = import.meta.env.VITE_PRIVY_APP_ID as string | undefined;
+
+const solanaRpcs = {
+  "solana:mainnet": {
+    rpc: createSolanaRpc("https://api.mainnet-beta.solana.com"),
+    rpcSubscriptions: createSolanaRpcSubscriptions("wss://api.mainnet-beta.solana.com"),
+  },
+  "solana:devnet": {
+    rpc: createSolanaRpc("https://api.devnet.solana.com"),
+    rpcSubscriptions: createSolanaRpcSubscriptions("wss://api.devnet.solana.com"),
+  },
+};
 
 export function WalletShell({ children }: { children: ReactNode }) {
-  // Loading default: mainnet. If /api/config says soldev/devnet we switch
-  // once it resolves (~tens of ms). React's connection provider re-mounts
-  // the underlying connection on endpoint change, so this is safe.
-  const [cluster, setCluster] = useState<Cluster>("mainnet-beta");
-  useEffect(() => {
-    void api
-      .getConfig()
-      .then((cfg) => {
-        setCluster(cfg.explorerCluster === "mainnet" ? "mainnet-beta" : "devnet");
-      })
-      .catch(() => {
-        // Network failure → leave the default. User can still connect and
-        // sign; balance display may be off until /api/config recovers.
-      });
-  }, []);
-
-  const endpoint = useMemo(() => clusterApiUrl(cluster), [cluster]);
-  const wallets = useMemo(() => [new PhantomWalletAdapter()], []);
-
+  if (!APP_ID) {
+    // Fail loud rather than render a half-initialized auth state that silently
+    // never connects. Set VITE_PRIVY_APP_ID in web/.env.local (see .env.example).
+    return (
+      <div className="card error" style={{ margin: "2rem auto", maxWidth: 480 }}>
+        Missing <code>VITE_PRIVY_APP_ID</code>. Create a Privy app at
+        dashboard.privy.io and add its App ID to <code>web/.env.local</code>.
+      </div>
+    );
+  }
   return (
-    <ConnectionProvider endpoint={endpoint}>
-      <WalletProvider wallets={wallets} autoConnect>
-        <WalletModalProvider>{children}</WalletModalProvider>
-      </WalletProvider>
-    </ConnectionProvider>
+    <PrivyProvider
+      appId={APP_ID}
+      config={{
+        // Solana-only app; lead the modal with wallet connectors (external is
+        // the primary path) and offer email/Google below for embedded wallets.
+        appearance: { walletChainType: "solana-only", showWalletLoginFirst: true },
+        loginMethods: ["wallet", "email", "google"],
+        externalWallets: { solana: { connectors: toSolanaWalletConnectors() } },
+        // Email/social users (no external wallet) get an embedded Solana wallet;
+        // users who connect Phantom keep theirs and get no duplicate.
+        embeddedWallets: { solana: { createOnLogin: "users-without-wallets" } },
+        solana: { rpcs: solanaRpcs },
+      }}
+    >
+      {children}
+    </PrivyProvider>
   );
 }
