@@ -1,4 +1,4 @@
-import type { Move, RoundResult, Side } from "../types";
+import type { Move, RoundResult, Side } from "../../../shared/types";
 
 const EMOJI: Record<Move, string> = { rock: "✊", paper: "✋", scissors: "✌️" };
 

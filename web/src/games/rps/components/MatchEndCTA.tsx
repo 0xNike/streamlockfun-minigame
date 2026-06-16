@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useWalletAddress } from "../useWalletAddress";
-import { api } from "../api";
-import type { MatchSnapshot, Side } from "../types";
+import { useWalletAddress } from "../../../shared/useWalletAddress";
+import { api } from "../../../shared/api";
+import type { MatchSnapshot, Side } from "../../../shared/types";
 
 export function MatchEndCTA({
   snap,

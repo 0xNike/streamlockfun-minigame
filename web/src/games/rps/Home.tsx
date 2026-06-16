@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useWalletAddress } from "../useWalletAddress";
-import { api, type ServerConfig } from "../api";
-import { Wager } from "../components/Wager";
-import { StreamPicker } from "../components/StreamPicker";
-import { WagerInput, type WagerInputResult } from "../components/WagerInput";
-import { WorldIdGate, useIsWalletVerified, useWorldId } from "../worldid";
+import { useWalletAddress } from "../../shared/useWalletAddress";
+import { api, type ServerConfig } from "../../shared/api";
+import { Wager } from "./components/Wager";
+import { StreamPicker } from "./components/StreamPicker";
+import { WagerInput, type WagerInputResult } from "./components/WagerInput";
+import { WorldIdGate, useIsWalletVerified, useWorldId } from "../../shared/worldid";
 
 interface PickedStream {
   streamId: string;

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { useWalletAddress } from "../useWalletAddress";
-import { api, type ServerConfig } from "../api";
-import { openWs, type WsClient } from "../ws";
-import { commitHash, newNonce } from "../crypto";
+import { useWalletAddress } from "../../shared/useWalletAddress";
+import { api, type ServerConfig } from "../../shared/api";
+import { openWs, type WsClient } from "../../shared/ws";
+import { commitHash, newNonce } from "../../shared/crypto";
 import type {
   MatchSnapshot,
   Move,
@@ -12,18 +12,18 @@ import type {
   ServerFrame,
   Side,
   TxKind,
-} from "../types";
-import { MoveButtons } from "../components/MoveButtons";
-import { RoundList } from "../components/RoundList";
-import { SettlementProgress, TechnicalDetails } from "../components/SettlementProgress";
-import { MatchHeader } from "../components/MatchHeader";
-import { Outcome } from "../components/Outcome";
-import { Wager } from "../components/Wager";
-import { StreamPicker, type StreamRow } from "../components/StreamPicker";
-import { StakeMath } from "../components/StakeMath";
-import { MatchEndCTA } from "../components/MatchEndCTA";
-import { PredictedWager } from "../components/PredictedWager";
-import { WorldIdGate, useIsWalletVerified } from "../worldid";
+} from "../../shared/types";
+import { MoveButtons } from "./components/MoveButtons";
+import { RoundList } from "./components/RoundList";
+import { SettlementProgress, TechnicalDetails } from "./components/SettlementProgress";
+import { MatchHeader } from "./components/MatchHeader";
+import { Outcome } from "./components/Outcome";
+import { Wager } from "./components/Wager";
+import { StreamPicker, type StreamRow } from "./components/StreamPicker";
+import { StakeMath } from "./components/StakeMath";
+import { MatchEndCTA } from "./components/MatchEndCTA";
+import { PredictedWager } from "./components/PredictedWager";
+import { WorldIdGate, useIsWalletVerified } from "../../shared/worldid";
 
 interface TxEvent {
   kind: TxKind;

@@ -1,7 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
-import { WalletShell } from "./wallet";
+import { WalletShell } from "./shared/wallet";
 import { App } from "./App";
 import "./tailwind.css";
 import "./styles.css";

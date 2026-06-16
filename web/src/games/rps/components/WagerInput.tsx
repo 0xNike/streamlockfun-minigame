@@ -13,8 +13,8 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import type { TokenMetaPublic } from "../types";
-import { formatToken, parseHumanToken } from "../format";
+import type { TokenMetaPublic } from "../../../shared/types";
+import { formatToken, parseHumanToken } from "../../../shared/format";
 
 export type WagerInputResult =
   | { status: "ok"; amountRaw: string; bpsOfMyStream: number }

@@ -51,7 +51,7 @@ The first game is best-of-three Rock-Paper-Scissors with commit-reveal, World ID
 
 **Web frontend** lives in `web/` (React + Vite, Privy wallet, World ID IDKit). On Vercel it ships as a static SPA at `games.streamlock.fun`: the **games hub** at `/`, RPS at `/rps`, and match views at `/match/:id`. `/api/*` rewrites to the Fly operator (see `vercel.json`).
 
-**Adding a game.** The hub is driven by the `GAMES` array in `web/src/pages/Explore.tsx` — add an entry there. Internal games use a route `href` (like `/rps`); external games use a full URL. Set `verified: true` only for games Streamlock has reviewed.
+**Adding a game.** Games are self-contained modules around a shared shell: the backend exposes a `GameEngine` seam (`src/server/games/`) and the frontend a `games/<id>/` folder, with the hub driven by the `GAMES` array in `web/src/hub/Explore.tsx`. Full step-by-step in [`src/server/games/README.md`](src/server/games/README.md).
 
 **In-house game design contract.** Every in-house game page must read as one continuous product with the hub, so the shell never shifts between routes:
 

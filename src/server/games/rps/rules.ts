@@ -8,7 +8,7 @@
  */
 
 import { createHash, timingSafeEqual } from "node:crypto";
-import type { Move, RoundResult, Side } from "./types.js";
+import type { Move, RoundResult, Side } from "../../types.js";
 
 export function judgeRound(round: number, a: Move, b: Move): RoundResult {
   let winner: Side | "tie";

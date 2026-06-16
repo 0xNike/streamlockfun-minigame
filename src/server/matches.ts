@@ -19,26 +19,23 @@ import { config } from "./config.js";
 import { getTokenMeta, peekTokenMeta } from "./tokenmeta.js";
 import {
   insertSession,
-  insertCommit,
-  recordReveal,
   setSessionPda,
   setSessionState,
   setPlayerB,
-  setRounds,
   setWinner,
   setWagerSnapshot,
   setFailed,
   signaturesForSession,
 } from "./db.js";
 import { logger } from "./log.js";
-import { decideMatch, judgeForfeit, judgeRound, verifyCommit } from "./rps.js";
+import type { GameEngine, GameHost } from "./games/engine.js";
+import { DEFAULT_GAME_ID, getGame } from "./games/registry.js";
 import * as settlement from "./settlement.js";
 import {
   ClientFrame,
   type ErrorCode,
   type MatchSnapshot,
   type MatchState,
-  type Move,
   type RoundResult,
   type ServerFrame,
   type Side,
@@ -80,8 +77,6 @@ export class LiveMatch {
   state: MatchState;
   pda: string | null = null;
   endTs: number | null = null;
-  roundIndex = 0;
-  rounds: RoundResult[] = [];
   winner: Side | "tie" | null = null;
   failedReason: string | null = null;
   /** Amount-based wager. Populated at B-join via materialiseWager(). Null until then,
@@ -91,25 +86,11 @@ export class LiveMatch {
    *  Acts as an upper bound at B-join; otherwise stakeBps drives the math. */
   desiredWagerAmountRaw: string | null = null;
 
-  // Round flow: commit phase → reveal phase → judge.
-  //
-  //   pendingCommits — sha256(move:nonce) seen so far, by side.
-  //   pendingReveals — verified (move, nonce) pairs, by side.
-  //   failedReveals  — sides whose reveal hash didn't match their commit. Treated
-  //                    the same as a forfeit for resolution purposes; persisted
-  //                    only in-memory (the audit trail is in the DB row's
-  //                    commit_hash + missing reveal columns).
-  //   forfeitedSides — sides that explicitly sent `forfeit_round`.
-  //
-  // A side is "in the running" for the round iff they committed AND are not in
-  // failedReveals or forfeitedSides. Only validly-revealed moves count as plays.
-  private pendingCommits: Map<Side, string> = new Map();
-  private pendingReveals: Map<Side, { move: Move; nonce: string }> = new Map();
-  private failedReveals: Set<Side> = new Set();
-  private forfeitedSides: Set<Side> = new Set();
-  private roundPhase: "commit" | "reveal" = "commit";
-  private phaseDeadline: number | null = null;
-  private phaseTimer: NodeJS.Timeout | null = null;
+  /** Gameplay engine for this match's game (commit-reveal RPS today). The shell
+   *  owns matchmaking, the on-chain session, settlement, sockets and snapshots;
+   *  the engine owns play between "active" and a winner, which it reports back
+   *  via the GameHost built in the constructor. */
+  private readonly engine: GameEngine;
   private destroyed = false;
 
   constructor(
@@ -124,8 +105,23 @@ export class LiveMatch {
     /** Creator's World ID nullifier when verifiedOnly. Used at join time to
      *  reject the same-human-as-opponent case. Null on open matches. */
     public readonly creatorNullifier: string | null = null,
+    /** Which game this match plays; looked up in the game registry to build the
+     *  engine. In-memory only today (see registry.ts). */
+    public readonly gameId: string = DEFAULT_GAME_ID,
   ) {
     this.state = playerB ? "creating" : "partnered";
+    const host: GameHost = {
+      matchId: this.id,
+      log: this.log,
+      now: () => nowSec(),
+      isActive: () => this.state === "active" && !this.destroyed,
+      broadcast: (f) => this.broadcast(f),
+      sendTo: (side, f) => this.sendTo(side, f),
+      sendError: (side, code, message, fatal) => this.sendError(side, code, message, fatal),
+      socketFor: (side) => (side === "a" ? this.playerA : this.playerB)?.socket ?? null,
+      onComplete: (winner, rounds) => this.onMatchComplete(winner, rounds),
+    };
+    this.engine = getGame(this.gameId).createEngine(host);
   }
 
   private get log() {
@@ -235,159 +231,18 @@ export class LiveMatch {
       this.endTs = endTs;
       setSessionPda(this.id, pda, endTs);
       this.transition("active", "session_created");
-      this.startRound();
+      this.engine.start();
     } catch (err) {
       this.fail(err instanceof Error ? err.message : String(err), "create_failed");
     }
   }
 
-  private startRound(): void {
-    if (this.destroyed || this.state !== "active") return;
-    this.pendingCommits.clear();
-    this.pendingReveals.clear();
-    this.failedReveals.clear();
-    this.forfeitedSides.clear();
-    this.roundPhase = "commit";
-    const deadline = nowSec() + config.ROUND_DEADLINE_SEC;
-    this.phaseDeadline = deadline;
-    this.broadcast({ type: "round_start", ts: nowSec(), round: this.roundIndex, deadline });
-    this.log.info({ round: this.roundIndex, phase: "commit", deadline }, "round.start");
-    this.armPhaseTimer(config.ROUND_DEADLINE_SEC);
-  }
-
-  private startRevealPhase(): void {
-    if (this.destroyed || this.state !== "active") return;
-    this.roundPhase = "reveal";
-    const deadline = nowSec() + config.REVEAL_DEADLINE_SEC;
-    this.phaseDeadline = deadline;
-    const aHash = this.pendingCommits.get("a");
-    const bHash = this.pendingCommits.get("b");
-    if (!aHash || !bHash) {
-      // Defensive: only call this once both commits are in.
-      this.log.error({ aHash: !!aHash, bHash: !!bHash }, "reveal_phase.missing_commit");
-      return;
-    }
-    this.broadcast({
-      type: "commits_locked",
-      ts: nowSec(),
-      round: this.roundIndex,
-      deadline,
-      commits: { a: aHash, b: bHash },
-    });
-    this.log.info({ round: this.roundIndex, phase: "reveal", deadline }, "phase.reveal");
-    this.armPhaseTimer(config.REVEAL_DEADLINE_SEC);
-  }
-
-  private armPhaseTimer(seconds: number): void {
-    if (this.phaseTimer) clearTimeout(this.phaseTimer);
-    this.phaseTimer = setTimeout(() => this.onPhaseDeadline(), seconds * 1000);
-  }
-
-  private onPhaseDeadline(): void {
-    if (this.state !== "active") return;
-    this.log.warn(
-      { round: this.roundIndex, phase: this.roundPhase },
-      "phase.deadline_hit",
-    );
-    this.judgeAndAdvance();
-  }
-
-  private clearPhaseTimer(): void {
-    if (this.phaseTimer) {
-      clearTimeout(this.phaseTimer);
-      this.phaseTimer = null;
-    }
-    this.phaseDeadline = null;
-  }
-
-  /** Round ends as soon as every side is in a terminal sub-state for the round. */
-  private checkRoundCompletion(): void {
-    const sides: Side[] = ["a", "b"];
-    const resolved = (s: Side) =>
-      this.pendingReveals.has(s) ||
-      this.forfeitedSides.has(s) ||
-      this.failedReveals.has(s);
-    if (sides.every(resolved)) this.judgeAndAdvance();
-  }
-
-  private judgeAndAdvance(): void {
-    this.clearPhaseTimer();
-    const aReveal = this.pendingReveals.get("a");
-    const bReveal = this.pendingReveals.get("b");
-    // "In the running" = committed AND not failed reveal AND not forfeited.
-    const inRunning = (s: Side) =>
-      !this.failedReveals.has(s) &&
-      !this.forfeitedSides.has(s) &&
-      (this.pendingCommits.has(s) || this.pendingReveals.has(s));
-    const aIn = inRunning("a");
-    const bIn = inRunning("b");
-    let result: RoundResult;
-    if (aReveal && bReveal) {
-      result = judgeRound(this.roundIndex, aReveal.move, bReveal.move);
-    } else if (aIn && !bIn) {
-      // a wins forfeit. record their move iff revealed; else null (commit-phase walkover).
-      result = judgeForfeit(this.roundIndex, { side: "a", move: aReveal?.move ?? null });
-    } else if (bIn && !aIn) {
-      result = judgeForfeit(this.roundIndex, { side: "b", move: bReveal?.move ?? null });
-    } else {
-      result = judgeForfeit(this.roundIndex, null);
-    }
-    this.rounds.push(result);
-    setRounds(this.id, this.rounds, this.roundIndex + 1);
-
-    // Round result frame: per-player perspective. yourMove/theirMove are null
-    // for any side that didn't validly reveal.
-    this.sendTo("a", {
-      type: "round_result",
-      ts: nowSec(),
-      round: result.round,
-      yourMove: aReveal?.move ?? null,
-      theirMove: bReveal?.move ?? null,
-      winner: result.winner,
-      forfeitedBy: result.forfeitedBy,
-    });
-    this.sendTo("b", {
-      type: "round_result",
-      ts: nowSec(),
-      round: result.round,
-      yourMove: bReveal?.move ?? null,
-      theirMove: aReveal?.move ?? null,
-      winner: result.winner,
-      forfeitedBy: result.forfeitedBy,
-    });
-    this.log.info({ round: result.round, winner: result.winner }, "round.judged");
-
-    const decision = decideMatch(this.rounds);
-    if (!decision.complete) {
-      this.roundIndex += 1;
-      this.startRound();
-      return;
-    }
-    this.winner = decision.winner;
-    this.broadcast({
-      type: "match_result",
-      ts: nowSec(),
-      winner: this.winner!,
-      rounds: this.rounds,
-    });
+  /** Engine callback: gameplay resolved. Broadcast the result, then settle. */
+  private onMatchComplete(winner: Side | "tie", rounds: RoundResult[]): void {
+    this.winner = winner;
+    this.broadcast({ type: "match_result", ts: nowSec(), winner, rounds });
     this.transition("complete", "best_of_three_done");
     void this.runSettlement();
-  }
-
-  private handleForfeit(side: Side): void {
-    if (this.state !== "active") return;
-    if (this.forfeitedSides.has(side)) return;
-    this.forfeitedSides.add(side);
-    this.log.info({ side, round: this.roundIndex }, "round.forfeit");
-    // Drop any partial commit/reveal so we don't accidentally count this side
-    // as having a move. (A side that already revealed can't un-reveal — they
-    // already played fairly; ignore the forfeit_round in that case.)
-    if (this.pendingReveals.has(side)) {
-      this.forfeitedSides.delete(side);
-      return;
-    }
-    this.pendingCommits.delete(side);
-    this.checkRoundCompletion();
   }
 
   private async runSettlement(): Promise<void> {
@@ -504,7 +359,7 @@ export class LiveMatch {
 
   private cleanup(): void {
     this.destroyed = true;
-    this.clearPhaseTimer();
+    this.engine.destroy();
     if (this.playerA.graceTimer) clearTimeout(this.playerA.graceTimer);
     if (this.playerB?.graceTimer) clearTimeout(this.playerB.graceTimer);
   }
@@ -525,7 +380,7 @@ export class LiveMatch {
         type: "match_result",
         ts: nowSec(),
         winner,
-        rounds: this.rounds,
+        rounds: this.engine.progress().rounds,
       });
       this.transition("complete", "abandon_forfeit");
       void this.runSettlement();
@@ -558,36 +413,13 @@ export class LiveMatch {
         snapshot: this.snapshot(),
       } satisfies ServerFrame),
     );
-    // If a soft WS reconnect drops in mid-reveal-phase, the client missed the
-    // commits_locked frame and won't fire its reveal. Re-send it. (A hard
-    // refresh wipes the secret in memory either way and the round will
-    // forfeit on the reveal deadline.)
-    this.maybeResendCommitsLocked(socket);
+    // If a soft WS reconnect drops in mid-game, the client may have missed
+    // phase state (e.g. RPS's commits_locked). Let the engine re-push it. (A
+    // hard refresh wipes any in-memory secret either way.)
+    this.engine.resync(side);
     this.broadcast({ type: "peer_status", ts: nowSec(), peer: side, connected: true });
     this.log.info({ side }, "match.attach");
     return true;
-  }
-
-  private maybeResendCommitsLocked(socket: WebSocket): void {
-    if (
-      this.state !== "active" ||
-      this.roundPhase !== "reveal" ||
-      this.phaseDeadline === null
-    )
-      return;
-    const aHash = this.pendingCommits.get("a");
-    const bHash = this.pendingCommits.get("b");
-    if (!aHash || !bHash) return;
-    if (socket.readyState !== WebSocket.OPEN) return;
-    socket.send(
-      JSON.stringify({
-        type: "commits_locked",
-        ts: nowSec(),
-        round: this.roundIndex,
-        deadline: this.phaseDeadline,
-        commits: { a: aHash, b: bHash },
-      } satisfies ServerFrame),
-    );
   }
 
   detachSocket(side: Side, code: number, reason: string): void {
@@ -633,7 +465,7 @@ export class LiveMatch {
               snapshot: this.snapshot(),
             } satisfies ServerFrame),
           );
-          this.maybeResendCommitsLocked(slot.socket);
+          this.engine.resync(side);
         }
         return;
       }
@@ -643,119 +475,11 @@ export class LiveMatch {
         sk?.close(1000, "voluntary leave");
         return;
       }
-      case "forfeit_round":
-        if (this.state !== "active") {
-          this.sendError(side, "OUT_OF_ORDER_MOVE", `match not active`, false);
-          return;
-        }
-        if (frame.round !== this.roundIndex) {
-          this.sendError(
-            side,
-            "OUT_OF_ORDER_MOVE",
-            `expected round ${this.roundIndex}`,
-            false,
-          );
-          return;
-        }
-        this.handleForfeit(side);
-        return;
-      case "commit":
-        this.handleCommit(side, frame.round, frame.commitHash);
-        return;
-      case "reveal":
-        this.handleReveal(side, frame.round, frame.move, frame.nonce);
+      default:
+        // Gameplay frames (commit / reveal / forfeit_round): the engine owns them.
+        this.engine.handleFrame(side, frame);
         return;
     }
-  }
-
-  // ───────── commit-reveal ─────────
-
-  private handleCommit(side: Side, round: number, commitHash: string): void {
-    if (this.state !== "active") {
-      this.sendError(side, "OUT_OF_ORDER_MOVE", `match not active (${this.state})`, false);
-      return;
-    }
-    if (round !== this.roundIndex) {
-      this.sendError(
-        side,
-        "OUT_OF_ORDER_MOVE",
-        `expected round ${this.roundIndex}, got ${round}`,
-        false,
-      );
-      return;
-    }
-    if (this.roundPhase !== "commit") {
-      this.sendError(side, "OUT_OF_ORDER_MOVE", "commit phase closed for this round", false);
-      return;
-    }
-    if (this.phaseDeadline !== null && nowSec() > this.phaseDeadline) {
-      this.sendError(side, "LATE_COMMIT", `commit past deadline for round ${round}`, false);
-      return;
-    }
-    if (this.pendingCommits.has(side)) {
-      this.sendError(side, "OUT_OF_ORDER_MOVE", "already committed this round", false);
-      return;
-    }
-    this.pendingCommits.set(side, commitHash);
-    insertCommit(this.id, round, side, commitHash);
-    this.log.info(
-      { side, round, commit: commitHash.slice(0, 8) },
-      "commit.received",
-    );
-    if (this.pendingCommits.size === 2) {
-      this.clearPhaseTimer();
-      this.startRevealPhase();
-    }
-  }
-
-  private handleReveal(side: Side, round: number, move: Move, nonce: string): void {
-    if (this.state !== "active") {
-      this.sendError(side, "OUT_OF_ORDER_MOVE", `match not active (${this.state})`, false);
-      return;
-    }
-    if (round !== this.roundIndex) {
-      this.sendError(
-        side,
-        "OUT_OF_ORDER_MOVE",
-        `expected round ${this.roundIndex}, got ${round}`,
-        false,
-      );
-      return;
-    }
-    if (this.roundPhase !== "reveal") {
-      this.sendError(side, "OUT_OF_ORDER_MOVE", "not in reveal phase yet", false);
-      return;
-    }
-    if (this.phaseDeadline !== null && nowSec() > this.phaseDeadline) {
-      this.sendError(side, "LATE_REVEAL", `reveal past deadline for round ${round}`, false);
-      return;
-    }
-    const expected = this.pendingCommits.get(side);
-    if (!expected) {
-      this.sendError(side, "OUT_OF_ORDER_MOVE", "no commit on file for this round", false);
-      return;
-    }
-    if (this.pendingReveals.has(side) || this.failedReveals.has(side)) {
-      this.sendError(side, "OUT_OF_ORDER_MOVE", "already revealed this round", false);
-      return;
-    }
-    if (!verifyCommit(move, nonce, expected)) {
-      // Hash mismatch. Treat as a round-level forfeit by this side (the other
-      // side wins the round). We don't fail the match — could be a buggy
-      // client. The DB row keeps the commit hash so the cheat is auditable.
-      this.failedReveals.add(side);
-      this.log.warn(
-        { side, round, expected: expected.slice(0, 8) },
-        "reveal.bad_hash",
-      );
-      this.sendError(side, "BAD_REVEAL", "reveal does not match committed hash", false);
-      this.checkRoundCompletion();
-      return;
-    }
-    this.pendingReveals.set(side, { move, nonce });
-    recordReveal(this.id, round, side, move, nonce);
-    this.log.info({ side, round, move }, "reveal.received");
-    this.checkRoundCompletion();
   }
 
   // ───────── frame helpers ─────────
@@ -794,6 +518,7 @@ export class LiveMatch {
   // ───────── snapshot for hello / GET endpoint ─────────
 
   snapshot(): MatchSnapshot {
+    const progress = this.engine.progress();
     return {
       matchId: this.id,
       state: this.state,
@@ -819,8 +544,8 @@ export class LiveMatch {
             lockedTokenAmount: this.playerB.lockedTokenAmount,
           }
         : null,
-      roundIndex: this.roundIndex,
-      rounds: this.rounds,
+      roundIndex: progress.roundIndex,
+      rounds: progress.rounds,
       winner: this.winner,
       endTs: this.endTs,
       disputeWindowSec: this.disputeWindowSec,
@@ -874,6 +599,8 @@ export function createLiveMatch(args: {
   verifiedOnly?: boolean;
   /** Creator's World ID nullifier (only meaningful when verifiedOnly). */
   creatorNullifier?: string | null;
+  /** Which game to play. Defaults to RPS. */
+  gameId?: string;
 }): LiveMatch {
   const id = randomBytes(32).toString("hex"); // sessionIdHex doubles as matchId
   insertSession({
@@ -902,6 +629,7 @@ export function createLiveMatch(args: {
     null,
     args.verifiedOnly ?? false,
     args.creatorNullifier ?? null,
+    args.gameId ?? DEFAULT_GAME_ID,
   );
   match.desiredWagerAmountRaw = args.desiredWagerAmountRaw ?? null;
   registry.set(id, match);

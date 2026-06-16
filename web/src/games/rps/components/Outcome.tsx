@@ -1,5 +1,5 @@
-import type { MatchSnapshot, Side } from "../types";
-import { formatToken, stakeBaseUnits } from "../format";
+import type { MatchSnapshot, Side } from "../../../shared/types";
+import { formatToken, stakeBaseUnits } from "../../../shared/format";
 
 function shortAddr(s: string) {
   return s.length > 12 ? `${s.slice(0, 6)}…${s.slice(-4)}` : s;

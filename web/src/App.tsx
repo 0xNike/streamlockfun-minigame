@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { Menu, X } from "lucide-react";
 import { Route, Routes, Link, useLocation } from "react-router-dom";
-import { Explore } from "./pages/Explore";
-import { Home } from "./pages/Home";
-import { Match } from "./pages/Match";
-import { WorldIdProvider } from "./worldid";
-import { GamesInfoModal } from "./pages/GamesInfoModal";
-import { useWalletAddress } from "./useWalletAddress";
+import { Explore } from "./hub/Explore";
+import { Home } from "./games/rps/Home";
+import { Match } from "./games/rps/Match";
+import { WorldIdProvider } from "./shared/worldid";
+import { GamesInfoModal } from "./hub/GamesInfoModal";
+import { useWalletAddress } from "./shared/useWalletAddress";
 
 // Connect / account control for the header. Replaces the Solana wallet
 // adapter's <WalletMultiButton/>: connected → short address that logs out on
