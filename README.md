@@ -1,10 +1,10 @@
-# streamlockfun-minigame
+# Streamlock Games
 
-Reference mini-game built on [`@streamlock/operator-sdk`](https://github.com/0xNike/streamlockfun/tree/main/packages/operator-sdk).
+The games platform behind [`games.streamlock.fun`](https://games.streamlock.fun) — a games hub plus the games themselves, built on [`@streamlock/operator-sdk`](https://github.com/0xNike/streamlockfun/tree/main/packages/operator-sdk).
 
-This repo is the receipt that the Streamlock Operator SDK is a real third-party integration boundary: it consumes only `@streamlock/operator-sdk` and `@solana/web3.js`. **Zero imports from the streamlockfun monorepo.** If you can build a game with this, you can build one without ever touching Streamlock's internals.
+This repo is also the receipt that the Streamlock Operator SDK is a real third-party integration boundary: it consumes only `@streamlock/operator-sdk` and `@solana/web3.js`. **Zero imports from the streamlockfun monorepo.** If you can build a game with this, you can build one without ever touching Streamlock's internals.
 
-The game is best-of-three Rock-Paper-Scissors with commit-reveal, World ID sybil gating, and amount-based wagering. Live at [streamlockfun-minigame.vercel.app](https://streamlockfun-minigame.vercel.app) (frontend) talking to [streamlockfun-minigame.fly.dev](https://streamlockfun-minigame.fly.dev) (operator).
+The first game is best-of-three Rock-Paper-Scissors with commit-reveal, World ID sybil gating, and amount-based wagering. Live at [games.streamlock.fun](https://games.streamlock.fun) — the hub at `/`, RPS at `/rps` — talking to [streamlockfun-minigame.fly.dev](https://streamlockfun-minigame.fly.dev) (operator).
 
 ---
 
@@ -49,7 +49,17 @@ The game is best-of-three Rock-Paper-Scissors with commit-reveal, World ID sybil
 - `src/main.ts` (`npm run match`) — single-match demo orchestrator. Discovers two streams, runs RPS in `src/game.ts`, settles. Useful as a smoke test and as a 200-line proof of the SDK boundary.
 - `src/server/` (`npm run server` / `npm start`) — production operator: Fastify HTTP + WSS, SQLite-backed match registry, commit-reveal RPS, settlement state machine with retries, crash reconciler, World ID gate. This is what runs on Fly.
 
-**Web frontend** lives in `web/` (React + Vite, Solana wallet adapter, World ID IDKit). On Vercel it ships as a static SPA; `/api/*` rewrites to the Fly operator (see `vercel.json`).
+**Web frontend** lives in `web/` (React + Vite, Privy wallet, World ID IDKit). On Vercel it ships as a static SPA at `games.streamlock.fun`: the **games hub** at `/`, RPS at `/rps`, and match views at `/match/:id`. `/api/*` rewrites to the Fly operator (see `vercel.json`).
+
+**Adding a game.** The hub is driven by the `GAMES` array in `web/src/pages/Explore.tsx` — add an entry there. Internal games use a route `href` (like `/rps`); external games use a full URL. Set `verified: true` only for games Streamlock has reviewed.
+
+**In-house game design contract.** Every in-house game page must read as one continuous product with the hub, so the shell never shifts between routes:
+
+- *Shell.* Render inside the shared `App` header + 760px `.app` column. Don't ship a per-game header — there is one universal bar.
+- *Surface & accent.* Black background, `zinc-900` panels (`--panel`) with `zinc-700` borders (`--border`), and **emerald** (`--accent`, `#10b981`) as the only interactive accent — matching the header's "Games" pill and the hub's CTAs. Primary buttons are emerald with **dark** text (`#06140d`), never white.
+- *Semantics.* Win = `--green`, loss = `--red`, tie/settling = `--amber`. Reuse these tokens instead of introducing new hues.
+
+The palette lives in `web/src/styles.css` `:root`. A new game that styles with these tokens (or the hub's Tailwind `zinc`/`emerald` utilities) inherits the look for free — keep them as the single source of truth rather than hard-coding colors per game.
 
 ## Setup
 
@@ -120,7 +130,7 @@ After a devnet match runs end-to-end:
 ## Deployment
 
 - **Operator → Fly.io.** `fly.toml` configures a single always-on machine in `iad` with a persistent volume for the SQLite DB. Match registry and settlement timers are in-process — **do not scale horizontally** without first moving state to Redis/Postgres. Set runtime secrets with `fly secrets set STREAMLOCK_OPERATOR_KEY=… OPERATOR_SECRET_KEY_B64=… …`.
-- **Web → Vercel.** `vercel.json` builds `web/`, serves the SPA, and rewrites `/api/*` to the Fly operator. Set `PUBLIC_FRONTEND_ORIGIN=<vercel-url>` on the Fly side so the operator emits the right CORS headers and `SameSite=None` World ID cookies.
+- **Web → Vercel.** `vercel.json` builds `web/`, serves the SPA at `games.streamlock.fun`, and rewrites `/api/*` to the Fly operator. Set `PUBLIC_FRONTEND_ORIGIN=https://games.streamlock.fun` on the Fly side so the operator emits the right CORS headers and `SameSite=None` World ID cookies.
 
 ## World ID (optional)
 

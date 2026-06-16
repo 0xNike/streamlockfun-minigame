@@ -1,8 +1,8 @@
 {
-  "name": "streamlockfun-minigame",
+  "name": "streamlock-games",
   "version": "0.1.0",
   "private": true,
-  "description": "Reference mini-game built on the Streamlock Operator SDK. Consumes @streamlock/operator-sdk only — no internal Streamlock imports — to demonstrate that the SDK is a real third-party integration boundary.",
+  "description": "Streamlock Games — games hub and games built on the Streamlock Operator SDK. Consumes @streamlock/operator-sdk only — no internal Streamlock imports — to demonstrate that the SDK is a real third-party integration boundary.",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/main.ts",
