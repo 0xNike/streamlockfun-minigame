@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Move } from "../types";
+import type { Move } from "../../../shared/types";
 
 const MOVES: { move: Move; emoji: string; label: string }[] = [
   { move: "rock", emoji: "✊", label: "Rock" },

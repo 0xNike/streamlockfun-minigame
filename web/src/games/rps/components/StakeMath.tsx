@@ -11,8 +11,8 @@
  * facts, not stale facts.
  */
 
-import type { PlayerSlotSnapshot, TokenMetaPublic, WagerSnapshotPublic } from "../types";
-import { formatToken, stakeBaseUnits } from "../format";
+import type { PlayerSlotSnapshot, TokenMetaPublic, WagerSnapshotPublic } from "../../../shared/types";
+import { formatToken, stakeBaseUnits } from "../../../shared/format";
 
 function fmtPct(bps: number): string {
   return `${(bps / 100).toFixed(2)}%`;

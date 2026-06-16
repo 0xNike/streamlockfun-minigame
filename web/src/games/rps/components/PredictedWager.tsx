@@ -7,8 +7,8 @@
  * UX, not a security boundary.
  */
 
-import type { TokenMetaPublic } from "../types";
-import { formatToken } from "../format";
+import type { TokenMetaPublic } from "../../../shared/types";
+import { formatToken } from "../../../shared/format";
 
 export function PredictedWager({
   lockedA,
