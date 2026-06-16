@@ -1,5 +1,4 @@
-import { useEffect } from "react";
-import { Route, Routes, Link, useLocation } from "react-router-dom";
+import { Route, Routes, Link } from "react-router-dom";
 import { Explore } from "./pages/Explore";
 import { Home } from "./pages/Home";
 import { Match } from "./pages/Match";
@@ -17,7 +16,7 @@ function WalletButton() {
   const style: React.CSSProperties = {
     fontSize: "0.85rem",
     fontWeight: 600,
-    padding: "0.4rem 0.85rem",
+    padding: "0.5rem 0.95rem",
     borderRadius: 999,
     border: "1px solid currentColor",
     background: "transparent",
@@ -26,14 +25,27 @@ function WalletButton() {
     fontFamily: "inherit",
   };
   if (!ready) {
-    return <button style={{ ...style, opacity: 0.5, cursor: "default" }} disabled>…</button>;
+    return (
+      <button className="header__cta" style={{ ...style, opacity: 0.5, cursor: "default" }} disabled>
+        …
+      </button>
+    );
   }
   if (!connected || !address) {
-    return <button style={style} onClick={() => login()}>Connect</button>;
+    return (
+      <button className="header__cta" style={style} onClick={() => login()}>
+        Connect
+      </button>
+    );
   }
   const short = `${address.slice(0, 4)}…${address.slice(-4)}`;
   return (
-    <button style={style} onClick={() => void logout()} title={`${address} — click to disconnect`}>
+    <button
+      className="header__cta"
+      style={style}
+      onClick={() => void logout()}
+      title={`${address} — click to disconnect`}
+    >
       {short}
     </button>
   );
@@ -68,17 +80,6 @@ function StreamlockLogo({ className }: { className?: string }) {
 }
 
 export function App() {
-  // The Games hub (/) is black-themed; the RPS game pages stay light. Toggle a
-  // theme flag on <html> so the page background (set in styles.css) follows the
-  // route rather than every page inheriting the light game palette.
-  const { pathname } = useLocation();
-  const isHub = pathname === "/";
-  useEffect(() => {
-    const root = document.documentElement;
-    root.classList.toggle("theme-dark", isHub);
-    return () => root.classList.remove("theme-dark");
-  }, [isHub]);
-
   return (
     <WorldIdProvider>
       <div className="app">
@@ -98,8 +99,8 @@ export function App() {
         <main>
           <Routes>
             <Route path="/" element={<Explore />} />
-            <Route path="/rps" element={<Home />} />
-            <Route path="/match/:id" element={<Match />} />
+            <Route path="/rps" element={<div className="game-view"><Home /></div>} />
+            <Route path="/match/:id" element={<div className="game-view"><Match /></div>} />
           </Routes>
         </main>
         <footer className="footer">
