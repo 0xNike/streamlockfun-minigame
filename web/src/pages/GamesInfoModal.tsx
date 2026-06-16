@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
 const POINTS = [
@@ -42,26 +43,29 @@ export function GamesInfoModal() {
         How it works
       </button>
 
-      {open && (
-        // `games-hub` re-applies the Preflight-substitute resets (border-style,
-        // button normalization) the modal relies on — needed now that the trigger
-        // lives in the global nav and the overlay mounts outside the hub page.
-        <div
-          className="games-hub fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
-          onClick={() => setOpen(false)}
-        >
+      {open &&
+        // Portal to <body> so the overlay never lives inside the collapsible
+        // nav — when the mobile burger menu closes, that nav is display:none,
+        // which would otherwise unmount this modal mid-open. `games-hub`
+        // re-applies the Preflight-substitute resets (border-style, button
+        // normalization) the modal relies on outside the hub page.
+        createPortal(
           <div
-            className="relative max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl border border-white/10 bg-zinc-900 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
+            className="games-hub fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+            onClick={() => setOpen(false)}
           >
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              aria-label="Close"
-              className="absolute right-4 top-4 text-zinc-400 transition-colors hover:text-white"
+            <div
+              className="relative max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl border border-white/10 bg-zinc-900 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
             >
-              <X className="h-5 w-5" />
-            </button>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                aria-label="Close"
+                className="absolute right-2 top-2 inline-flex h-11 w-11 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-white/5 hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
 
             <div className="p-6">
               <h2 className="mb-3 text-lg font-semibold tracking-tight text-white">
@@ -91,8 +95,9 @@ export function GamesInfoModal() {
               </div>
             </div>
           </div>
-        </div>
-      )}
+        </div>,
+          document.body,
+        )}
     </>
   );
 }
