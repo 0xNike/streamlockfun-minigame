@@ -58,45 +58,29 @@ html.theme-dark .app {
   max-width: 1200px;
 }
 
-/* Header: on the black hub, drop the navy "anchor strip" look for a clean
-   near-black bar that sits quietly on the page. The navy strip stays on the
-   light game pages, where it intentionally bridges back to the parent app. */
-html.theme-dark .header {
-  background: #0b0b0d;
-  border: 1px solid #1d1d20;
-  box-shadow: none;
-}
-html.theme-dark .brand__pill {
-  background: #10b981; /* emerald — matches the hub's accent */
-  color: #06140d;
-}
-/* One confident accent per surface: on the hub, the primary action (wallet)
-   goes emerald to match the GAMES pill instead of fighting it with the parent
-   app's indigo. The light game pages keep indigo (the global rules below). */
-html.theme-dark .wallet-adapter-button-trigger {
-  background: #10b981 !important;
-  color: #06140d !important;
-}
-html.theme-dark .wallet-adapter-button-trigger:not([disabled]):hover {
-  background: #0ea372 !important;
-}
-
 .app { max-width: 760px; margin: 0 auto; padding: 24px 16px 80px; }
 
-/* ───────── Header (dark anchor strip) ─────────
-   The header is the one element that intentionally stays dark — it visually
-   ties the mini-game back to the main Streamlock app. */
+/* ───────── Header (one universal bar) ─────────
+   A single header treatment across the whole site — the games hub and the
+   in-house game pages — so the shell never shifts between routes. It stays a
+   clean near-black bar on every page (the hub is black, the game pages light;
+   the dark bar sits well on both and ties back to the parent Streamlock app).
+   `color: #fff` sets a light foreground so currentColor-driven children — the
+   inline logo and the WalletButton's ghost outline — are always legible; the
+   quiet nav links opt down to a dimmer grey via `.header__link`. */
 .header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 16px;
   flex-wrap: wrap;
-  background: var(--anchor);
+  background: #0b0b0d;
+  border: 1px solid #1d1d20;
+  color: #ffffff;
   padding: 14px 20px;
   border-radius: 14px;
   margin-bottom: 24px;
-  box-shadow: var(--shadow-md);
+  box-shadow: none;
 }
 .header .brand {
   display: inline-flex;
@@ -112,8 +96,8 @@ html.theme-dark .wallet-adapter-button-trigger:not([disabled]):hover {
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: #FFFFFF;
-  background: var(--accent);
+  color: #06140d;
+  background: #10b981; /* emerald — the Games identity, consistent on every route */
   padding: 4px 10px;
   border-radius: 999px;
   line-height: 1;
