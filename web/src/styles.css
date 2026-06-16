@@ -129,6 +129,27 @@ html, body, #root {
   color: #ffffff;
 }
 
+/* Burger toggle: hidden on desktop (the nav sits inline), shown on phones where
+   it collapses .header__actions. Excluded from the game-button chrome above so
+   it stays a bare icon in `currentColor`. */
+.header__burger {
+  display: none;
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  padding: 6px;
+  margin: 0;
+  color: #ffffff;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  transition: background 0.15s;
+}
+.header__burger:hover { background: rgba(255, 255, 255, 0.06); }
+
 /* Long on-chain identifiers (wallets, mints, stream ids, signatures, share URLs)
    need to break inside their containers so they don't push layouts wider than the viewport. */
 code, .share-url { overflow-wrap: anywhere; word-break: break-word; }
@@ -264,7 +285,7 @@ input:focus, select:focus {
    specificity for every other (game-page) button. Otherwise this hover rule
    (specificity 0,2,1) outranks Tailwind's `hover:bg-*` utilities (0,2,0) and the
    hub's (?) help button flashes a light cream background on hover. */
-button:where(:not(.games-hub *):not(.header__link)) {
+button:where(:not(.games-hub *):not(.header__link):not(.header__burger)) {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -276,9 +297,9 @@ button:where(:not(.games-hub *):not(.header__link)) {
   transition: background .15s, border-color .15s, transform .05s, box-shadow .15s;
   box-shadow: var(--shadow-sm);
 }
-button:where(:not(.games-hub *):not(.header__link)):hover:not(:disabled) { background: var(--panel2); border-color: #52525b; }
-button:where(:not(.games-hub *):not(.header__link)):active:not(:disabled) { transform: translateY(1px); }
-button:where(:not(.games-hub *):not(.header__link)):disabled { opacity: 0.5; cursor: not-allowed; }
+button:where(:not(.games-hub *):not(.header__link):not(.header__burger)):hover:not(:disabled) { background: var(--panel2); border-color: #52525b; }
+button:where(:not(.games-hub *):not(.header__link):not(.header__burger)):active:not(:disabled) { transform: translateY(1px); }
+button:where(:not(.games-hub *):not(.header__link):not(.header__burger)):disabled { opacity: 0.5; cursor: not-allowed; }
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
@@ -762,8 +783,24 @@ button.link:hover:not(:disabled) {
 @media (max-width: 600px) {
   .app { padding: 16px 12px 64px; }
   .header { padding: 12px 16px; margin-bottom: 16px; gap: 12px; }
+  .header .brand { order: 1; }
   .header .brand__logo { height: 18px; }
   .header .brand__pill { font-size: 10px; padding: 3px 8px; }
+
+  /* Brand + burger share the top line; the nav drops to a full-width panel
+     below, shown only when the burger is open. */
+  .header__burger { display: inline-flex; order: 2; }
+  .header__actions {
+    display: none;
+    order: 3;
+    width: 100%;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+    padding-top: 12px;
+    border-top: 1px solid #1d1d20;
+  }
+  .header__actions[data-open="true"] { display: flex; }
 
   h1 { font-size: 22px; }
   h2 { font-size: 16px; }

@@ -1,4 +1,6 @@
-import { Route, Routes, Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Menu, X } from "lucide-react";
+import { Route, Routes, Link, useLocation } from "react-router-dom";
 import { Explore } from "./pages/Explore";
 import { Home } from "./pages/Home";
 import { Match } from "./pages/Match";
@@ -80,6 +82,15 @@ function StreamlockLogo({ className }: { className?: string }) {
 }
 
 export function App() {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const location = useLocation();
+
+  // Collapse the burger menu on navigation, so moving between routes never
+  // leaves the mobile panel hanging open over the new page.
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [location.pathname]);
+
   return (
     <WorldIdProvider>
       <div className="app">
@@ -88,9 +99,22 @@ export function App() {
             <StreamlockLogo className="brand__logo" />
             <span className="brand__pill">Games</span>
           </Link>
-          <nav className="header__actions">
-            <GamesInfoModal />
-            <a className="header__link" href="https://app.streamlock.fun">
+          <button
+            type="button"
+            className="header__burger"
+            aria-label={menuOpen ? "Close menu" : "Open menu"}
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((v) => !v)}
+          >
+            {menuOpen ? <X size={22} /> : <Menu size={22} />}
+          </button>
+          <nav className="header__actions" data-open={menuOpen}>
+            <GamesInfoModal onSelect={() => setMenuOpen(false)} />
+            <a
+              className="header__link"
+              href="https://app.streamlock.fun"
+              onClick={() => setMenuOpen(false)}
+            >
               Open app
             </a>
             <WalletButton />

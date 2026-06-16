@@ -17,7 +17,7 @@ const POINTS = [
   },
 ];
 
-export function GamesInfoModal() {
+export function GamesInfoModal({ onSelect }: { onSelect?: () => void }) {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -37,7 +37,10 @@ export function GamesInfoModal() {
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          setOpen(true);
+          onSelect?.();
+        }}
         className="header__link"
       >
         How it works
