@@ -50,7 +50,14 @@ export function WalletShell({ children }: { children: ReactNode }) {
       config={{
         // Solana-only app; lead the modal with wallet connectors (external is
         // the primary path) and offer email/Google below for embedded wallets.
-        appearance: { walletChainType: "solana-only", showWalletLoginFirst: true },
+        // walletList is an explicit allow-list: only these wallet buttons show.
+        // Omitting "detected_solana_wallets" hides every other detected
+        // extension, so add a wallet here to surface it.
+        appearance: {
+          walletChainType: "solana-only",
+          showWalletLoginFirst: true,
+          walletList: ["phantom", "solflare"],
+        },
         loginMethods: ["wallet", "email", "google"],
         externalWallets: { solana: { connectors: toSolanaWalletConnectors() } },
         // Email/social users (no external wallet) get an embedded Solana wallet;
