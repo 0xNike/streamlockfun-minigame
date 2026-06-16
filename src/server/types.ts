@@ -89,6 +89,10 @@ export const CreateMatchBody = z.object({
   // valid wid_session cookie matching their wallet. When false (default), the
   // match is open to anyone — same UX as before World ID was introduced.
   verifiedOnly: z.boolean().optional().default(false),
+  // Which game to create. Defaults to RPS server-side; validated against the
+  // game registry when set. Kept loose here (a string) to avoid a types.ts →
+  // registry import cycle; createLiveMatch / getGame reject unknown ids.
+  gameId: z.string().optional(),
 });
 export type CreateMatchBody = z.infer<typeof CreateMatchBody>;
 
@@ -145,8 +149,29 @@ export type WagerSnapshotPublic = {
   bpsIfBLoses: number;
 };
 
+// ───────── Per-game snapshot state ─────────
+// Game-specific play state carried in the match snapshot, rendered by that
+// game's client. Grows into a discriminated union (on `kind`) as games are
+// added. RPS leaves this null (its state is roundIndex + rounds).
+
+export type GomokuSnapshot = {
+  kind: "gomoku";
+  /** Board edge length (15 = standard). */
+  size: number;
+  /** Row-major grid, `board[y][x]`. Each cell is the side that played it, or null. */
+  board: (Side | null)[][];
+  /** Whose move it is right now. */
+  turn: Side;
+  /** The most recent stone, for highlight; null before the first move. */
+  lastMove: { x: number; y: number; by: Side } | null;
+};
+
+export type GameStateSnapshot = GomokuSnapshot;
+
 export type MatchSnapshot = {
   matchId: string;
+  /** Which game this match plays ("rps" | "gomoku" | …). Drives client routing. */
+  gameId: string;
   state: MatchState;
   pda: string | null;
   tokenMint: string;
@@ -155,6 +180,9 @@ export type MatchSnapshot = {
   playerB: PlayerSlotSnapshot | null;
   roundIndex: number;
   rounds: RoundResult[];
+  /** Game-specific play state (e.g. the Gomoku board). Null for games whose
+   *  state is fully described by roundIndex + rounds (RPS). */
+  gameState: GameStateSnapshot | null;
   winner: Side | "tie" | null;
   endTs: number | null;
   disputeWindowSec: number;
@@ -198,6 +226,12 @@ export type ServerFrame =
       forfeitedBy?: Side | "both";
     }
   | { type: "match_result"; ts: number; winner: Side | "tie"; rounds: RoundResult[] }
+  // ── Gomoku ──
+  // A stone was placed; clients apply it to their board.
+  | { type: "gm_move"; ts: number; by: Side; x: number; y: number }
+  // Whose turn it is now, and the wall-clock deadline by which they must move
+  // (miss it → forfeit). Sent at game start and after each accepted move.
+  | { type: "gm_turn"; ts: number; turn: Side; deadline: number }
   | {
       type: "tx";
       ts: number;
@@ -249,6 +283,13 @@ export const ClientFrame = z.discriminatedUnion("type", [
     nonce: NonceSchema,
   }),
   z.object({ type: z.literal("forfeit_round"), round: z.number().int().nonnegative() }),
+  // Gomoku: place a stone at (x, y). Bounds are re-checked against the live
+  // board size in the engine; 64 is a generous upper bound for any board.
+  z.object({
+    type: z.literal("place"),
+    x: z.number().int().min(0).max(63),
+    y: z.number().int().min(0).max(63),
+  }),
   z.object({ type: z.literal("request_resync") }),
   z.object({ type: z.literal("pong") }),
   z.object({ type: z.literal("leave") }),
@@ -268,6 +309,10 @@ export const ERROR_CODES = [
   "BAD_REVEAL",
   "LATE_COMMIT",
   "LATE_REVEAL",
+  // Gomoku
+  "NOT_YOUR_TURN",
+  "CELL_TAKEN",
+  "OUT_OF_BOUNDS",
   "RPC_DEGRADED",
   "INTERNAL",
   // World ID gating

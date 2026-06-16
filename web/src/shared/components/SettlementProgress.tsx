@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import type { MatchSnapshot, MatchState, Side, TxKind } from "../../../shared/types";
-import { formatToken, stakeBaseUnits } from "../../../shared/format";
+import type { MatchSnapshot, MatchState, Side, TxKind } from "../types";
+import { formatToken, stakeBaseUnits } from "../format";
 
 interface TxEvent {
   kind: TxKind;

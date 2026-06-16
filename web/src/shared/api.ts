@@ -95,6 +95,8 @@ export const api = {
     /** Opt the match into the World ID sybil gate. Both creator and joiner
      *  need a valid wid_session cookie matching their wallet. */
     verifiedOnly?: boolean;
+    /** Which game to create ("gomoku"). Defaults to RPS server-side when omitted. */
+    gameId?: string;
   }): Promise<CreateMatchResponse> {
     const res = await fetch(`${BASE}/api/matches`, {
       method: "POST",

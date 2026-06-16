@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { MatchSnapshot, Side } from "../../../shared/types";
+import type { MatchSnapshot, Side } from "../types";
 
 const STATE_LABEL: Record<string, string> = {
   partnered: "waiting for opponent",

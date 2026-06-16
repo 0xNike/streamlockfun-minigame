@@ -62,6 +62,7 @@ export function Home() {
         streamId: picked.streamId,
         wagerAmountRaw: wagerResult.status === "ok" ? wagerResult.amountRaw : undefined,
         verifiedOnly,
+        gameId: "gomoku",
       });
       navigate(`/match/${matchId}`);
     } catch (e) {
@@ -90,13 +91,13 @@ export function Home() {
     <>
       <section className="intro" aria-labelledby="intro-title">
         <div className="intro__moves" aria-hidden="true">
-          <span>✊</span>
-          <span>✋</span>
-          <span>✌️</span>
+          <span>⚫</span>
+          <span>⚪</span>
         </div>
-        <h1 id="intro-title" className="intro__title">Rock Paper Scissors</h1>
+        <h1 id="intro-title" className="intro__title">Gomoku</h1>
         <p className="intro__sub">
-          Best of 3. Stake <strong>{stakePct}%</strong> of the loser's stream — winner takes the share.
+          Take turns placing stones. First to line up <strong>five in a row</strong> — across,
+          down, or diagonally — wins the {stakePct}% stake.
         </p>
       </section>
       {cfg && (

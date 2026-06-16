@@ -3,7 +3,8 @@ import { Menu, X } from "lucide-react";
 import { Route, Routes, Link, useLocation } from "react-router-dom";
 import { Explore } from "./hub/Explore";
 import { Home } from "./games/rps/Home";
-import { Match } from "./games/rps/Match";
+import { Home as GomokuHome } from "./games/gomoku/Home";
+import { MatchRoute } from "./games/MatchRoute";
 import { WorldIdProvider } from "./shared/worldid";
 import { GamesInfoModal } from "./hub/GamesInfoModal";
 import { useWalletAddress } from "./shared/useWalletAddress";
@@ -124,7 +125,8 @@ export function App() {
           <Routes>
             <Route path="/" element={<Explore />} />
             <Route path="/rps" element={<div className="game-view"><Home /></div>} />
-            <Route path="/match/:id" element={<div className="game-view"><Match /></div>} />
+            <Route path="/gomoku" element={<div className="game-view"><GomokuHome /></div>} />
+            <Route path="/match/:id" element={<div className="game-view"><MatchRoute /></div>} />
           </Routes>
         </main>
         <footer className="footer">

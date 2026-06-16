@@ -79,6 +79,7 @@ export function registerMatchRoutes(app: FastifyInstance): void {
       desiredWagerAmountRaw: body.wagerAmountRaw,
       verifiedOnly: body.verifiedOnly,
       creatorNullifier,
+      gameId: body.gameId,
     });
     const res: CreateMatchResponse = {
       matchId: match.id,
