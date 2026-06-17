@@ -32,6 +32,7 @@ interface TxEvent {
 
 type Role =
   | { kind: "loading" }
+  | { kind: "spectator" } // no wallet, or a full match the wallet isn't part of — read-only
   | { kind: "needs-confirm"; snapshot: MatchSnapshot } // wallet not yet a participant; show join prompt
   | { kind: "playing"; you: Side };
 
@@ -62,6 +63,9 @@ export function Match() {
   const [, forceTick] = useState(0);
   const wsRef = useRef<WsClient | null>(null);
   const verified = useIsWalletVerified(wallet);
+  // The wallet identity we last classified against, so the role re-resolves when
+  // a spectator connects a wallet (undefined = not yet classified).
+  const classifiedRef = useRef<string | null | undefined>(undefined);
 
   useEffect(() => {
     void api.getConfig().then(setCfg).catch(() => {});
@@ -77,15 +81,21 @@ export function Match() {
     void api.getMatch(matchId).then(setSnap).catch(() => {});
   }, [matchId, snap?.state, snap?.playerB]);
 
-  // Step 1: classify role.
+  // Step 1: classify role. Runs without a wallet (→ spectator) and re-resolves
+  // when the wallet identity changes, but never disrupts an in-progress join or
+  // an active playing session.
   useEffect(() => {
-    if (!matchId || !wallet) return;
-    if (role.kind !== "loading") return;
+    if (!matchId) return;
+    if (role.kind === "needs-confirm" || role.kind === "playing") return;
+    if (classifiedRef.current === (wallet ?? null)) return;
+    classifiedRef.current = wallet ?? null;
     void (async () => {
       try {
         const current = await api.getMatch(matchId);
         setSnap(current);
-        if (current.playerA.wallet === wallet) {
+        if (!wallet) {
+          setRole({ kind: "spectator" });
+        } else if (current.playerA.wallet === wallet) {
           setRole({ kind: "playing", you: "a" });
         } else if (current.playerB?.wallet === wallet) {
           setRole({ kind: "playing", you: "b" });
@@ -93,13 +103,45 @@ export function Match() {
           // Slot is open. Show join confirmation rather than auto-joining.
           setRole({ kind: "needs-confirm", snapshot: current });
         } else {
-          throw new Error("Match is full and you are not a participant.");
+          // Full match the wallet isn't part of → watch read-only.
+          setRole({ kind: "spectator" });
         }
       } catch (e) {
         setJoinErr(e instanceof Error ? e.message : String(e));
       }
     })();
   }, [matchId, wallet, role.kind]);
+
+  // Spectators get no player WS (it requires ?as=a|b), so poll the public
+  // snapshot for live-ish updates until the match reaches a terminal state, and
+  // drive the board straight from the snapshot's gameState.
+  useEffect(() => {
+    if (role.kind !== "spectator" || !matchId) return;
+    let stop = false;
+    const id = setInterval(async () => {
+      try {
+        const s = await api.getMatch(matchId);
+        if (stop) return;
+        setSnap(s);
+        if (s.state === "done" || s.state === "cancelled" || s.state === "failed") {
+          clearInterval(id);
+        }
+      } catch {
+        /* transient — retry next tick */
+      }
+    }, 2000);
+    return () => {
+      stop = true;
+      clearInterval(id);
+    };
+  }, [role.kind, matchId]);
+
+  // Spectator board comes from the polled snapshot, not WS frames.
+  useEffect(() => {
+    if (role.kind !== "spectator") return;
+    seedFromGameState((snap?.gameState as GomokuSnapshot | null) ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role.kind, snap]);
 
   async function confirmJoin() {
     if (!matchId || !wallet || role.kind !== "needs-confirm") return;
@@ -218,11 +260,11 @@ export function Match() {
   const shareUrl = useMemo(() => `${location.origin}/match/${matchId}`, [matchId]);
 
   if (!matchId) return <div className="card error">Missing match id.</div>;
-  if (!wallet) return <div className="card">Connect your wallet to view this match.</div>;
   if (joinErr) return <div className="card error">{joinErr}</div>;
 
   // Pre-join confirmation
   if (role.kind === "needs-confirm") {
+    if (!wallet) return null; // role is only "needs-confirm" with a wallet; narrows the type
     const s = role.snapshot;
     // Synthesize a playerB snapshot from the joiner's selected stream so
     // StakeMath can render the loss-side wager in token units symmetrically
@@ -329,10 +371,29 @@ export function Match() {
   const inPlay = snap.state === "active";
   const you = role.kind === "playing" ? role.you : null;
   const yourTurn = inPlay && you !== null && turn === you;
+  const spectating = role.kind === "spectator";
+  const turnLabel = spectating
+    ? turn
+      ? `Player ${turn === "a" ? "A" : "B"} to move`
+      : "—"
+    : yourTurn
+      ? "Your move"
+      : "Opponent's move";
 
   return (
     <div className="match">
       <MatchHeader snap={snap} you={you} matchId={matchId} shareUrl={shareUrl} />
+
+      {spectating && (
+        <div className="card spectator-note">
+          <span className="dim small">
+            Spectating —{" "}
+            {snap.playerB
+              ? "connect a wallet to start your own match."
+              : "connect a wallet to join this match."}
+          </span>
+        </div>
+      )}
 
       <Wager
         tokenMint={snap.tokenMint}
@@ -369,7 +430,7 @@ export function Match() {
         <div className="card gomoku-play">
           <div className="gomoku-status">
             <span className={`gomoku-turn ${yourTurn ? "gomoku-turn--you" : "gomoku-turn--opp"}`}>
-              {yourTurn ? "Your move" : "Opponent's move"}
+              {turnLabel}
             </span>
             <TurnCountdown deadline={turnDeadline} />
           </div>
@@ -382,9 +443,11 @@ export function Match() {
             onPlace={placeStone}
           />
           <p className="dim small gomoku-hint">
-            {yourTurn
-              ? "Tap an empty spot to place your stone. First to five in a row wins."
-              : "Waiting for your opponent to move."}
+            {spectating
+              ? "You're watching this match live. First to five in a row wins."
+              : yourTurn
+                ? "Tap an empty spot to place your stone. First to five in a row wins."
+                : "Waiting for your opponent to move."}
           </p>
         </div>
       )}

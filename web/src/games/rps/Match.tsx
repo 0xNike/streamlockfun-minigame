@@ -36,6 +36,7 @@ interface TxEvent {
 
 type Role =
   | { kind: "loading" }
+  | { kind: "spectator" } // no wallet, or a full match the wallet isn't part of — read-only
   | { kind: "needs-confirm"; snapshot: MatchSnapshot } // wallet not yet a participant; show join prompt
   | { kind: "playing"; you: Side };
 
@@ -62,6 +63,9 @@ export function Match() {
   // no-reveal forfeit by the server (same as ghosting after committing).
   const secretsRef = useRef<Map<number, { move: Move; nonce: string }>>(new Map());
   const verified = useIsWalletVerified(wallet);
+  // The wallet identity we last classified against, so the role re-resolves when
+  // a spectator connects a wallet (undefined = not yet classified).
+  const classifiedRef = useRef<string | null | undefined>(undefined);
 
   useEffect(() => {
     void api.getConfig().then(setCfg).catch(() => {});
@@ -77,15 +81,21 @@ export function Match() {
     void api.getMatch(matchId).then(setSnap).catch(() => {});
   }, [matchId, snap?.state, snap?.playerB]);
 
-  // Step 1: classify role.
+  // Step 1: classify role. Runs without a wallet (→ spectator) and re-resolves
+  // when the wallet identity changes, but never disrupts an in-progress join or
+  // an active playing session.
   useEffect(() => {
-    if (!matchId || !wallet) return;
-    if (role.kind !== "loading") return;
+    if (!matchId) return;
+    if (role.kind === "needs-confirm" || role.kind === "playing") return;
+    if (classifiedRef.current === (wallet ?? null)) return;
+    classifiedRef.current = wallet ?? null;
     void (async () => {
       try {
         const current = await api.getMatch(matchId);
         setSnap(current);
-        if (current.playerA.wallet === wallet) {
+        if (!wallet) {
+          setRole({ kind: "spectator" });
+        } else if (current.playerA.wallet === wallet) {
           setRole({ kind: "playing", you: "a" });
         } else if (current.playerB?.wallet === wallet) {
           setRole({ kind: "playing", you: "b" });
@@ -93,13 +103,37 @@ export function Match() {
           // Slot is open. Show join confirmation rather than auto-joining.
           setRole({ kind: "needs-confirm", snapshot: current });
         } else {
-          throw new Error("Match is full and you are not a participant.");
+          // Full match the wallet isn't part of → watch read-only.
+          setRole({ kind: "spectator" });
         }
       } catch (e) {
         setJoinErr(e instanceof Error ? e.message : String(e));
       }
     })();
   }, [matchId, wallet, role.kind]);
+
+  // Spectators get no player WS (it requires ?as=a|b), so poll the public
+  // snapshot for live-ish updates until the match reaches a terminal state.
+  useEffect(() => {
+    if (role.kind !== "spectator" || !matchId) return;
+    let stop = false;
+    const id = setInterval(async () => {
+      try {
+        const s = await api.getMatch(matchId);
+        if (stop) return;
+        setSnap(s);
+        if (s.state === "done" || s.state === "cancelled" || s.state === "failed") {
+          clearInterval(id);
+        }
+      } catch {
+        /* transient — retry next tick */
+      }
+    }, 2000);
+    return () => {
+      stop = true;
+      clearInterval(id);
+    };
+  }, [role.kind, matchId]);
 
   async function confirmJoin() {
     if (!matchId || !wallet || role.kind !== "needs-confirm") return;
@@ -248,11 +282,11 @@ export function Match() {
   const shareUrl = useMemo(() => `${location.origin}/match/${matchId}`, [matchId]);
 
   if (!matchId) return <div className="card error">Missing match id.</div>;
-  if (!wallet) return <div className="card">Connect your wallet to view this match.</div>;
   if (joinErr) return <div className="card error">{joinErr}</div>;
 
   // Pre-join confirmation
   if (role.kind === "needs-confirm") {
+    if (!wallet) return null; // role is only "needs-confirm" with a wallet; narrows the type
     const s = role.snapshot;
     // Synthesize a playerB snapshot from the joiner's selected stream so
     // StakeMath can render the loss-side wager in token units symmetrically
@@ -372,6 +406,17 @@ export function Match() {
       )}
       <MatchHeader snap={snap} you={you} matchId={matchId} shareUrl={shareUrl} />
 
+      {role.kind === "spectator" && (
+        <div className="card spectator-note">
+          <span className="dim small">
+            Spectating —{" "}
+            {snap.playerB
+              ? "connect a wallet to start your own match."
+              : "connect a wallet to join this match."}
+          </span>
+        </div>
+      )}
+
       <Wager
         tokenMint={snap.tokenMint}
         tokenMeta={snap.tokenMeta}
@@ -403,7 +448,7 @@ export function Match() {
         </div>
       )}
 
-      {inPlay && (
+      {inPlay && role.kind === "playing" && (
         <MoveButtons
           round={snap.roundIndex}
           deadline={roundDeadline}
