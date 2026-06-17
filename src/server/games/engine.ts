@@ -56,7 +56,13 @@ export interface GameEngine {
 }
 
 export interface GameDefinition {
+  /** Internal id used for routing/dispatch and the match's gameId ("rps"). */
   readonly id: string;
+  /** Display name, also used as the lobby listing's gameName. */
   readonly title: string;
+  /** Stable kebab-case slug for the Games Lobby (`gameId` in the lobby contract,
+   *  the key the per-game approval gate uses). Defaults to `id` when omitted —
+   *  set it only when the lobby slug differs from the internal id. */
+  readonly slug?: string;
   createEngine(host: GameHost): GameEngine;
 }
