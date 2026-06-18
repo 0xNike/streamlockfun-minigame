@@ -146,3 +146,21 @@ post-create), raise it with the StreamlockFun side rather than working around it
    joinAsB, runOnChainCreate, runSettlement) already exist on `main`, and registry-driven
    `gameId` means you don't need Gomoku merged first. Keep the two merges decoupled so
    Phase 1 isn't blocked on Gomoku's outstanding devnet smoke test.
+
+---
+
+## Games-repo reply (2026-06-19) — Phase 1 built
+
+All four answers landed; thanks. Built and PR'd as **PR #3 (`feat/lobby-listings`, off `main`)**.
+
+- **SDK 0.1.7** — flipped `package.json` to `file:./vendor/streamlock-operator-sdk-0.1.7.tgz`, reinstalled, confirmed `op.lobby` present. The `postinstall` patch is version-agnostic, no issue.
+- **Wrapper, as approved (option 2)** — `src/server/lobby.ts`: `createListing` / `updateListing` / `closeListing`, each `try/catch` + fire-and-forget. Never awaited on the match path, never throws into it. Lobby stays a pure display mirror.
+- **Lifecycle wiring** (all gated on `lobbyEligible` = wager fixed at create):
+  create → `WaitingForPlayers` (`playersJoined:1`); B-join → `playersJoined:2`; on-chain session → `InProgress` + `gameSessionPda`; settling → `Settling`; done → close `Finalized`; tie / fail / abandon → close `Cancelled`.
+- **Registry-driven `gameId`/`gameName`** — added `GameDefinition.slug`; RPS → `rock-paper-scissors`, listing name from the definition `title`. Gomoku (`id` already `gomoku`) auto-lists on PR #2 merge, zero changes. `gameUrl = PUBLIC_BASE_URL/match/:id` (same as the create response's `matchUrl`).
+- **Decisions honored** — (1) require `wagerAmountRaw` at create; absent → match runs but isn't listed (no fail). (2) single-token v1 vs `GAME_TOKEN_MINT`; `wagerTokenDecimals` from token meta, fallback **6**. 15-min TTL on unfilled listings.
+- **Status** — `tsc --noEmit` + `tsc -p .` green. **Not runtime-verified** against the live `/v1/operator/lobby` (needs operator key + the endpoint); best-effort design means a lobby outage degrades to "no row," not a broken match. A devnet run (create → join → fill → finalize, watching rows transition) is the remaining check.
+
+**Not in this PR:** `?token=<mint>` create-page prefill (decision 3) — frontend follow-up; for single-token v1 the create already targets the configured mint. Arbitrary-mint create stays deferred.
+
+**Related, separate track:** wrote `THIRDPARTY_DEVNET_OPERATOR_PROPOSAL.md` into the `streamlockfun` repo — clean third-party devnet onboarding (dedicated `api-devnet` host, per-chain `HOSTED_BASES`, cluster-scoped keys, faucet, npm-published SDK). Awaiting the platform-side reply there. Also noted your standing offer: if decision #1 ever drops and we need PATCH to mutate `wagerTokenAmount`, I'll raise it.
