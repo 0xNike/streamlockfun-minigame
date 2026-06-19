@@ -28,6 +28,7 @@ import {
   signaturesForSession,
 } from "./db.js";
 import { logger } from "./log.js";
+import * as lobby from "./lobby.js";
 import type { GameEngine, GameHost } from "./games/engine.js";
 import { DEFAULT_GAME_ID, getGame } from "./games/registry.js";
 import * as settlement from "./settlement.js";
@@ -128,6 +129,12 @@ export class LiveMatch {
     return logger.child({ matchId: this.id });
   }
 
+  /** A match is mirrored to the Games Lobby only when its wager is fixed at
+   *  create time (Phase 1 decision). Drives the best-effort lobby.* updates. */
+  private get lobbyEligible(): boolean {
+    return !!this.desiredWagerAmountRaw;
+  }
+
   private slot(side: Side): PlayerSlot {
     if (side === "a") return this.playerA;
     if (!this.playerB) throw new Error("playerB not set");
@@ -168,6 +175,7 @@ export class LiveMatch {
     }
     setPlayerB(this.id, wallet, streamId, "creating");
     this.transition("creating", "b_joined");
+    if (this.lobbyEligible) void lobby.updateListing(this.id, { playersJoined: 2 });
     void this.refreshEntitlements();
     void this.runOnChainCreate();
   }
@@ -230,6 +238,8 @@ export class LiveMatch {
       this.pda = pda;
       this.endTs = endTs;
       setSessionPda(this.id, pda, endTs);
+      if (this.lobbyEligible)
+        void lobby.updateListing(this.id, { status: "InProgress", gameSessionPda: pda });
       this.transition("active", "session_created");
       this.engine.start();
     } catch (err) {
@@ -257,6 +267,7 @@ export class LiveMatch {
           });
         }
         this.transition("cancelled", "tie");
+        if (this.lobbyEligible) void lobby.closeListing(this.id, "Cancelled");
         this.broadcast({ type: "cancelled", ts: nowSec(), reason: "tie" });
       } catch (err) {
         this.fail(err instanceof Error ? err.message : String(err), "cancel_failed");
@@ -290,6 +301,7 @@ export class LiveMatch {
     ];
     setWinner(this.id, this.winner, deltas, "submitting");
     this.transition("submitting", "deltas_built");
+    if (this.lobbyEligible) void lobby.updateListing(this.id, { status: "Settling" });
     if (!this.pda) {
       this.fail("missing pda at submit time", "no_pda");
       return;
@@ -326,6 +338,7 @@ export class LiveMatch {
       this.transition("applying", "finalize_done");
       // applySigs already broadcast as confirmed via runChainOp.
       this.transition("done", "apply_done");
+      if (this.lobbyEligible) void lobby.closeListing(this.id, "Finalized");
       const cluster = config.TOKEN_ENV === "sol" ? "mainnet" : "devnet";
       this.broadcast({
         type: "done",
@@ -347,6 +360,7 @@ export class LiveMatch {
     this.failedReason = `${code}: ${message}`;
     setFailed(this.id, "failed", this.failedReason);
     this.state = "failed";
+    if (this.lobbyEligible) void lobby.closeListing(this.id, "Cancelled");
     this.log.error({ code, message }, "match.failed");
     this.broadcast({
       type: "failed",
@@ -637,6 +651,16 @@ export function createLiveMatch(args: {
   );
   match.desiredWagerAmountRaw = args.desiredWagerAmountRaw ?? null;
   registry.set(id, match);
+  // Mirror to the Games Lobby from create time — but only when the wager is
+  // fixed up front (Phase 1 decision). Best-effort; never blocks match creation.
+  if (args.desiredWagerAmountRaw) {
+    void lobby.createListing({
+      matchId: id,
+      gameId: args.gameId ?? DEFAULT_GAME_ID,
+      tokenMint: args.tokenMint,
+      wagerAmountRaw: args.desiredWagerAmountRaw,
+    });
+  }
   // Eager fetch A's entitlement + token metadata so first snapshot has both.
   void match["refreshEntitlements"]();
   void getTokenMeta(args.tokenMint).then(() => {
