@@ -239,7 +239,13 @@ export class LiveMatch {
       this.endTs = endTs;
       setSessionPda(this.id, pda, endTs);
       if (this.lobbyEligible)
-        void lobby.updateListing(this.id, { status: "InProgress", gameSessionPda: pda });
+        void lobby.updateListing(this.id, {
+          status: "InProgress",
+          gameSessionPda: pda,
+          // Push the TTL out so an in-progress match isn't dropped from the
+          // lobby mid-game (the create-time TTL is sized for unfilled offers).
+          expiresAt: nowSec() + 3600,
+        });
       this.transition("active", "session_created");
       this.engine.start();
     } catch (err) {

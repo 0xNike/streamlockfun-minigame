@@ -32,6 +32,32 @@ function matchUrl(matchId: string): string {
   return `${config.PUBLIC_BASE_URL}/match/${matchId}`;
 }
 
+/**
+ * Guard: a wallet must actually own a share of the stream it stakes. A stream
+ * whose `effectiveBps` is 0 is held-of-record but 0%-owned (its position was
+ * shifted away in prior games) — staking it is meaningless and was previously
+ * allowed. We reject explicit-zero ownership. A transient entitlement-fetch miss
+ * (no numeric effectiveBps) is allowed through, so an SDK hiccup never
+ * false-blocks a legitimate player; the on-chain settlement is authoritative.
+ */
+async function assertOwnsStream(
+  wallet: string,
+  streamId: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const ent = (await op.streams.entitlement(streamId, wallet)) as { effectiveBps?: number };
+    if (typeof ent.effectiveBps === "number" && ent.effectiveBps <= 0) {
+      return {
+        ok: false,
+        message: "You own 0% of this stream — you can't stake it. Pick a stream you hold a position in.",
+      };
+    }
+  } catch {
+    // ownership indeterminate (transient SDK miss) — don't false-block
+  }
+  return { ok: true };
+}
+
 export function registerMatchRoutes(app: FastifyInstance): void {
   app.post("/api/matches", async (req, reply) => {
     const parsed = CreateMatchBody.safeParse(req.body);
@@ -45,6 +71,12 @@ export function registerMatchRoutes(app: FastifyInstance): void {
       });
     }
     const body = parsed.data;
+    const ownsA = await assertOwnsStream(body.wallet, body.streamId);
+    if (!ownsA.ok) {
+      return reply.code(422).send({
+        error: { code: "INVALID_STREAM", message: ownsA.message, fatal: true },
+      });
+    }
     let creatorNullifier: string | null = null;
     if (body.verifiedOnly) {
       if (!isWorldIdConfigured()) {
@@ -109,6 +141,12 @@ export function registerMatchRoutes(app: FastifyInstance): void {
     if (!match.hasSlotForB()) {
       return reply.code(409).send({
         error: { code: "MATCH_FULL", message: "match already has B", fatal: true },
+      });
+    }
+    const ownsB = await assertOwnsStream(parsed.data.wallet, parsed.data.streamId);
+    if (!ownsB.ok) {
+      return reply.code(422).send({
+        error: { code: "INVALID_STREAM", message: ownsB.message, fatal: true },
       });
     }
     if (match.verifiedOnly) {
