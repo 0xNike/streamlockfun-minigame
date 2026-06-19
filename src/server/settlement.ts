@@ -21,6 +21,24 @@ import type { ServerFrame, TxKind } from "./types.js";
 const nowSec = () => Math.floor(Date.now() / 1000);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * RPC rate-limit / quota errors (e.g. Helius `-32429 "max usage reached"`,
+ * generic 429s). These are transient under burst — session-creation fires
+ * several RPC calls in quick succession and can momentarily exceed a provider's
+ * RPS cap. They MUST be retryable: runChainOp's backoff (2s→8s→…) clears the
+ * window, so a blip retries instead of killing the match. Use a dedicated/paid
+ * RPC to avoid them in the first place (required for mainnet).
+ */
+function isRateLimited(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    msg.includes("429") ||
+    msg.includes("-32429") ||
+    msg.includes("Too Many Requests") ||
+    msg.includes("max usage")
+  );
+}
+
 export type BroadcastFn = (frame: ServerFrame) => void;
 
 async function runChainOp<T>(args: {
@@ -143,10 +161,11 @@ export async function createSession(args: {
       sessionId: args.sessionId,
       kind: "create",
       broadcast: args.broadcast,
-      maxAttempts: 2,
+      maxAttempts: 4,
       isRetryable: (err) => {
         const msg = err instanceof Error ? err.message : String(err);
         return (
+          isRateLimited(err) ||
           msg.includes("block height exceeded") ||
           msg.includes("expired") ||
           msg.includes("fetch failed") ||
@@ -214,6 +233,7 @@ export async function submitDeltas(args: {
       isRetryable: (err) => {
         const msg = err instanceof Error ? err.message : String(err);
         return (
+          isRateLimited(err) ||
           msg.includes("block height exceeded") ||
           msg.includes("expired") ||
           msg.includes("fetch failed") ||
@@ -268,6 +288,7 @@ export async function finalizeAndApply(args: {
       // 0x1780 = DisputeWindowNotEnded → chain time still behind; backoff helps.
       // Network blips also retryable.
       return (
+        isRateLimited(err) ||
         msg.includes("DisputeWindowNotEnded") ||
         msg.includes("0x1780") ||
         msg.includes("fetch failed") ||

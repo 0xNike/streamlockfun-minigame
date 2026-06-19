@@ -97,6 +97,7 @@ export type WagerError =
   | "AMOUNT_ABOVE_CAP" // exceeds the smaller side's locked
   | "AMOUNT_INVALID" // not a positive integer string
   | "LOCKED_MISSING" // a stream is missing lockedTokenAmount (legacy/null)
+  | "STREAMS_UNAVAILABLE" // couldn't read stream sizes (transient) — retry, don't downgrade
   | "COHORT_MISMATCH"; // exceeds tolerance band (policy-level)
 
 /**
