@@ -35,6 +35,17 @@ const Schema = z.object({
   // poker-room-tier; tighten to 2-3 if you want chess-style cohorting. Set to
   // a very large number (e.g. 10000) to disable.
   COHORT_MAX_RATIO: z.coerce.number().positive().default(5),
+  // Stream-ownership enforcement. The create/join guard rejects staking a stream
+  // the wallet owns 0% of (effectiveBps <= 0). When the entitlement endpoint
+  // can't return effectiveBps (e.g. a degraded api-devnet), behaviour depends on
+  // this flag: "true" = fail CLOSED (reject the unverifiable stake — safe for
+  // mainnet), "false" = fail OPEN (allow + log a warning — keeps devnet usable
+  // while the entitlement endpoint is down). Default false; set true for mainnet
+  // once effectiveBps is reliably returned.
+  STRICT_STREAM_OWNERSHIP: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
   DISPUTE_WINDOW_SEC: z.coerce.number().int().positive().default(120),
   FINALIZE_BUFFER_SEC: z.coerce.number().int().nonnegative().default(30),
   // endTs = nowSec() + ENDTS_BUFFER_SEC, recomputed per create attempt so
