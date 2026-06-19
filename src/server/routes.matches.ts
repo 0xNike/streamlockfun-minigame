@@ -8,6 +8,7 @@
 import type { FastifyInstance } from "fastify";
 import { op, GAME_TOKEN_MINT } from "../operator.js";
 import { config } from "./config.js";
+import { logger } from "./log.js";
 import { listLive, getLive, createLiveMatch, type LiveMatch } from "./matches.js";
 import { getTokenMeta } from "./tokenmeta.js";
 import {
@@ -35,26 +36,52 @@ function matchUrl(matchId: string): string {
 /**
  * Guard: a wallet must actually own a share of the stream it stakes. A stream
  * whose `effectiveBps` is 0 is held-of-record but 0%-owned (its position was
- * shifted away in prior games) — staking it is meaningless and was previously
- * allowed. We reject explicit-zero ownership. A transient entitlement-fetch miss
- * (no numeric effectiveBps) is allowed through, so an SDK hiccup never
- * false-blocks a legitimate player; the on-chain settlement is authoritative.
+ * shifted away in prior games) — staking it is meaningless and must be rejected.
+ *
+ * We read the wallet's entitlement share and retry once on a transient miss.
+ * When ownership is genuinely unverifiable (the entitlement endpoint returns no
+ * `effectiveBps` — currently the case against api-devnet, see the platform
+ * handoff), the policy is EXPLICIT, not silent: `STRICT_STREAM_OWNERSHIP=true`
+ * fails closed (reject — mainnet-safe); the default fails open but logs a warning
+ * so the gap is visible rather than hidden.
  */
 async function assertOwnsStream(
   wallet: string,
   streamId: string,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  try {
-    const ent = (await op.streams.entitlement(streamId, wallet)) as { effectiveBps?: number };
-    if (typeof ent.effectiveBps === "number" && ent.effectiveBps <= 0) {
+  let effBps: number | undefined;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const ent = (await op.streams.entitlement(streamId, wallet)) as { effectiveBps?: number };
+      if (typeof ent.effectiveBps === "number") {
+        effBps = ent.effectiveBps;
+        break;
+      }
+    } catch {
+      /* transient — fall through to retry */
+    }
+    if (attempt < 2) await new Promise((r) => setTimeout(r, 400));
+  }
+
+  if (typeof effBps === "number") {
+    if (effBps <= 0) {
       return {
         ok: false,
         message: "You own 0% of this stream — you can't stake it. Pick a stream you hold a position in.",
       };
     }
-  } catch {
-    // ownership indeterminate (transient SDK miss) — don't false-block
+    return { ok: true }; // owns a positive share
   }
+
+  // Ownership unverifiable (no effectiveBps after retry).
+  if (config.STRICT_STREAM_OWNERSHIP) {
+    logger.warn({ wallet, streamId }, "ownership.unverifiable_reject");
+    return {
+      ok: false,
+      message: "Couldn't verify your ownership of this stream right now — please try again in a moment.",
+    };
+  }
+  logger.warn({ wallet, streamId }, "ownership.unverifiable_allow");
   return { ok: true };
 }
 
@@ -335,19 +362,38 @@ async function tryMaterialiseWager(
 > {
   let lockedA: string | null = null;
   let lockedB: string | null = null;
-  try {
-    const { streams } = (await op.tokens.streams(match.tokenMint)) as {
-      streams: Array<{ streamId: string; lockedTokenAmount?: string | null }>;
+  // Read both stream sizes, retrying a transient miss. We must distinguish a
+  // FETCH FAILURE (couldn't read → retryable; do NOT silently downgrade to the
+  // symmetric-bps path, which would bet a wrong amount) from a GENUINE null
+  // lockedTokenAmount (orphan-backfilled legacy stream → bps path is correct).
+  let fetchOk = false;
+  for (let attempt = 1; attempt <= 3 && !fetchOk; attempt++) {
+    try {
+      const { streams } = (await op.tokens.streams(match.tokenMint)) as {
+        streams: Array<{ streamId: string; lockedTokenAmount?: string | null }>;
+      };
+      lockedA =
+        streams.find((s) => s.streamId === match.playerA.streamId)?.lockedTokenAmount ?? null;
+      lockedB = streams.find((s) => s.streamId === joinerStreamId)?.lockedTokenAmount ?? null;
+      fetchOk = true;
+    } catch {
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 300 * attempt));
+    }
+  }
+
+  if (!fetchOk) {
+    // Couldn't read stream sizes after retries — reject (retryable) rather than
+    // silently fall back to 10%-bps on a transient infra blip.
+    return {
+      kind: "reject",
+      code: "STREAMS_UNAVAILABLE",
+      message: "Couldn't read stream sizes right now — please try again in a moment.",
     };
-    lockedA =
-      streams.find((s) => s.streamId === match.playerA.streamId)?.lockedTokenAmount ?? null;
-    lockedB = streams.find((s) => s.streamId === joinerStreamId)?.lockedTokenAmount ?? null;
-  } catch {
-    // SDK transient — fall through to legacy path so the join doesn't fail
-    // for an infrastructure blip. Settlement will still work via bpsAtStake.
   }
 
   if (lockedA == null || lockedB == null) {
+    // Genuinely missing locked size (legacy/orphan-backfilled stream) — the
+    // symmetric bpsAtStake path is the correct fallback here.
     return { kind: "ok", wager: null };
   }
 
