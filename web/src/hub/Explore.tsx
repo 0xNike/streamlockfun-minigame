@@ -44,6 +44,18 @@ const GAMES: Game[] = [
     status: "live",
     verified: true,
   },
+  {
+    slug: "reversi",
+    name: "Reversi",
+    tagline: "Outflank to flip — most discs wins",
+    description:
+      "Take turns placing discs and trap your opponent's between two of yours to flip them. Whoever holds the most discs when the board fills grows their share of the unlock payout.",
+    operator: "Streamlock Labs",
+    href: "/reversi",
+    tags: ["1v1", "Strategy"],
+    status: "live",
+    verified: true,
+  },
 ];
 
 // Only surface games people can actually play right now.

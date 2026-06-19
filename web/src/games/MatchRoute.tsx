@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { api } from "../shared/api";
 import { Match as RpsMatch } from "./rps/Match";
 import { Match as GomokuMatch } from "./gomoku/Match";
+import { Match as ReversiMatch } from "./reversi/Match";
 
 /**
  * Dispatcher for `/match/:id`. Fetches the match once to read its `gameId`, then
@@ -40,5 +41,11 @@ export function MatchRoute() {
 
   if (!resolved) return <div className="card">Loading match…</div>;
 
-  return gameId === "gomoku" ? <GomokuMatch /> : <RpsMatch />;
+  return gameId === "reversi" ? (
+    <ReversiMatch />
+  ) : gameId === "gomoku" ? (
+    <GomokuMatch />
+  ) : (
+    <RpsMatch />
+  );
 }

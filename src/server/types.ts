@@ -166,7 +166,21 @@ export type GomokuSnapshot = {
   lastMove: { x: number; y: number; by: Side } | null;
 };
 
-export type GameStateSnapshot = GomokuSnapshot;
+export type ReversiSnapshot = {
+  kind: "reversi";
+  /** Board edge length (8). */
+  size: number;
+  /** Row-major grid, `board[y][x]`. Each cell is "a" (black) / "b" (white) / null. */
+  board: (Side | null)[][];
+  /** Whose move it is right now. */
+  turn: Side;
+  /** The most recent placement, for highlight; null before the first move. */
+  lastMove: { x: number; y: number; by: Side } | null;
+  /** Live disc counts. */
+  counts: { a: number; b: number };
+};
+
+export type GameStateSnapshot = GomokuSnapshot | ReversiSnapshot;
 
 export type MatchSnapshot = {
   matchId: string;
@@ -229,6 +243,12 @@ export type ServerFrame =
   // ── Gomoku ──
   // A stone was placed; clients apply it to their board.
   | { type: "gm_move"; ts: number; by: Side; x: number; y: number }
+  // ── Reversi ──
+  // A disc was placed at (x,y) by `by`, flipping `flipped` opponent discs.
+  | { type: "rv_move"; ts: number; by: Side; x: number; y: number; flipped: { x: number; y: number }[] }
+  // Whose turn now + the move deadline. `autoPassed` names a side skipped for
+  // having no legal move (so the UI can say "opponent had no move").
+  | { type: "rv_turn"; ts: number; turn: Side; deadline: number; autoPassed?: Side }
   // Whose turn it is now, and the wall-clock deadline by which they must move
   // (miss it → forfeit). Sent at game start and after each accepted move.
   | { type: "gm_turn"; ts: number; turn: Side; deadline: number }
@@ -309,10 +329,11 @@ export const ERROR_CODES = [
   "BAD_REVEAL",
   "LATE_COMMIT",
   "LATE_REVEAL",
-  // Gomoku
+  // Gomoku / Reversi (board games)
   "NOT_YOUR_TURN",
   "CELL_TAKEN",
   "OUT_OF_BOUNDS",
+  "ILLEGAL_MOVE",
   "RPC_DEGRADED",
   "INTERNAL",
   // World ID gating

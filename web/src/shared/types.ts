@@ -74,7 +74,16 @@ export type GomokuSnapshot = {
   turn: Side;
   lastMove: { x: number; y: number; by: Side } | null;
 };
-export type GameStateSnapshot = GomokuSnapshot;
+export type ReversiSnapshot = {
+  kind: "reversi";
+  size: number;
+  /** Row-major grid, board[y][x]; "a"=black / "b"=white / null. */
+  board: (Side | null)[][];
+  turn: Side;
+  lastMove: { x: number; y: number; by: Side } | null;
+  counts: { a: number; b: number };
+};
+export type GameStateSnapshot = GomokuSnapshot | ReversiSnapshot;
 
 export type MatchSnapshot = {
   matchId: string;
@@ -128,6 +137,8 @@ export type ServerFrame =
   | { type: "match_result"; ts: number; winner: Side | "tie"; rounds: RoundResult[] }
   | { type: "gm_move"; ts: number; by: Side; x: number; y: number }
   | { type: "gm_turn"; ts: number; turn: Side; deadline: number }
+  | { type: "rv_move"; ts: number; by: Side; x: number; y: number; flipped: { x: number; y: number }[] }
+  | { type: "rv_turn"; ts: number; turn: Side; deadline: number; autoPassed?: Side }
   | {
       type: "tx";
       ts: number;

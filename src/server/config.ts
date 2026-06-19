@@ -26,6 +26,8 @@ const Schema = z.object({
   // Gomoku per-move deadline: a player who doesn't place a stone in time
   // forfeits the match to their opponent.
   GOMOKU_MOVE_DEADLINE_SEC: z.coerce.number().int().positive().default(30),
+  // Reversi per-move deadline: same forfeit-on-timeout rule.
+  REVERSI_MOVE_DEADLINE_SEC: z.coerce.number().int().positive().default(30),
   RECONNECT_GRACE_SEC: z.coerce.number().int().nonnegative().default(30),
   STAKE_BPS: z.coerce.number().int().positive().max(10000).default(1000),
   // Cohort tolerance band for amount-based betting. A pairing is rejected when
