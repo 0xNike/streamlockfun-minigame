@@ -32,6 +32,18 @@ const GAMES: Game[] = [
     status: "live",
     verified: true,
   },
+  {
+    slug: "gomoku",
+    name: "Gomoku",
+    tagline: "Five in a row, 1v1",
+    description:
+      "Take turns placing stones on the board against another holder. Be the first to line up five in a row and grow your share of the unlock payout.",
+    operator: "Streamlock Labs",
+    href: "/gomoku",
+    tags: ["1v1", "Strategy"],
+    status: "live",
+    verified: true,
+  },
 ];
 
 // Only surface games people can actually play right now.

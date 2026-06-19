@@ -521,6 +521,7 @@ export class LiveMatch {
     const progress = this.engine.progress();
     return {
       matchId: this.id,
+      gameId: this.gameId,
       state: this.state,
       pda: this.pda,
       tokenMint: this.tokenMint,
@@ -546,6 +547,7 @@ export class LiveMatch {
         : null,
       roundIndex: progress.roundIndex,
       rounds: progress.rounds,
+      gameState: progress.state ?? null,
       winner: this.winner,
       endTs: this.endTs,
       disputeWindowSec: this.disputeWindowSec,
@@ -602,6 +604,8 @@ export function createLiveMatch(args: {
   /** Which game to play. Defaults to RPS. */
   gameId?: string;
 }): LiveMatch {
+  const gameId = args.gameId ?? DEFAULT_GAME_ID;
+  getGame(gameId); // validate before we touch the DB — throws on unknown id
   const id = randomBytes(32).toString("hex"); // sessionIdHex doubles as matchId
   insertSession({
     id,
@@ -629,7 +633,7 @@ export function createLiveMatch(args: {
     null,
     args.verifiedOnly ?? false,
     args.creatorNullifier ?? null,
-    args.gameId ?? DEFAULT_GAME_ID,
+    gameId,
   );
   match.desiredWagerAmountRaw = args.desiredWagerAmountRaw ?? null;
   registry.set(id, match);

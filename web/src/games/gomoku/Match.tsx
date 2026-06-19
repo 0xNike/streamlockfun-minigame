@@ -3,27 +3,23 @@ import { useParams } from "react-router-dom";
 import { useWalletAddress } from "../../shared/useWalletAddress";
 import { api, type ServerConfig } from "../../shared/api";
 import { openWs, type WsClient } from "../../shared/ws";
-import { commitHash, newNonce } from "../../shared/crypto";
 import type {
+  GomokuSnapshot,
   MatchSnapshot,
-  Move,
   PlayerSlotSnapshot,
-  RoundResult,
   ServerFrame,
   Side,
   TxKind,
 } from "../../shared/types";
-import { MoveButtons } from "./components/MoveButtons";
-import { RoundList } from "./components/RoundList";
 import { SettlementProgress, TechnicalDetails } from "../../shared/components/SettlementProgress";
 import { MatchHeader } from "../../shared/components/MatchHeader";
-import { Outcome } from "./components/Outcome";
 import { Wager } from "../../shared/components/Wager";
 import { StreamPicker, type StreamRow } from "../../shared/components/StreamPicker";
 import { StakeMath } from "../../shared/components/StakeMath";
 import { MatchEndCTA } from "../../shared/components/MatchEndCTA";
 import { PredictedWager } from "../../shared/components/PredictedWager";
 import { WorldIdGate, useIsWalletVerified } from "../../shared/worldid";
+import { Board } from "./Board";
 
 interface TxEvent {
   kind: TxKind;
@@ -40,6 +36,12 @@ type Role =
   | { kind: "needs-confirm"; snapshot: MatchSnapshot } // wallet not yet a participant; show join prompt
   | { kind: "playing"; you: Side };
 
+const DEFAULT_SIZE = 15;
+
+function emptyBoard(size: number): (Side | null)[][] {
+  return Array.from({ length: size }, () => Array.from({ length: size }, () => null));
+}
+
 export function Match() {
   const { id: matchId } = useParams<{ id: string }>();
   const { address: wallet } = useWalletAddress();
@@ -51,17 +53,15 @@ export function Match() {
   const [joining, setJoining] = useState(false);
   const [joinerStream, setJoinerStream] = useState<StreamRow | null>(null);
   const [txEvents, setTxEvents] = useState<TxEvent[]>([]);
-  const [roundDeadline, setRoundDeadline] = useState<number | null>(null);
-  const [committedRound, setCommittedRound] = useState<number | null>(null);
-  // Per-round outcome flash. Set when a round_result arrives where this client
-  // won or lost (skipped on ties). Keyed by round so back-to-back results each
-  // restart the animation; cleared on unmount of the round transition.
-  const [flash, setFlash] = useState<{ kind: "win" | "loss"; key: number } | null>(null);
+  // Gomoku play state, seeded from the GomokuSnapshot on `hello` and advanced by
+  // gm_move / gm_turn frames. Kept locally so the grid updates immediately.
+  const [size, setSize] = useState(DEFAULT_SIZE);
+  const [board, setBoard] = useState<(Side | null)[][]>(() => emptyBoard(DEFAULT_SIZE));
+  const [turn, setTurn] = useState<Side | null>(null);
+  const [lastMove, setLastMove] = useState<{ x: number; y: number; by: Side } | null>(null);
+  const [turnDeadline, setTurnDeadline] = useState<number | null>(null);
+  const [, forceTick] = useState(0);
   const wsRef = useRef<WsClient | null>(null);
-  // Per-round secret store for the commit-reveal flow. Lives only in this
-  // tab's memory — a hard refresh between commit and reveal is treated as a
-  // no-reveal forfeit by the server (same as ghosting after committing).
-  const secretsRef = useRef<Map<number, { move: Move; nonce: string }>>(new Map());
   const verified = useIsWalletVerified(wallet);
   // The wallet identity we last classified against, so the role re-resolves when
   // a spectator connects a wallet (undefined = not yet classified).
@@ -113,7 +113,8 @@ export function Match() {
   }, [matchId, wallet, role.kind]);
 
   // Spectators get no player WS (it requires ?as=a|b), so poll the public
-  // snapshot for live-ish updates until the match reaches a terminal state.
+  // snapshot for live-ish updates until the match reaches a terminal state, and
+  // drive the board straight from the snapshot's gameState.
   useEffect(() => {
     if (role.kind !== "spectator" || !matchId) return;
     let stop = false;
@@ -134,6 +135,13 @@ export function Match() {
       clearInterval(id);
     };
   }, [role.kind, matchId]);
+
+  // Spectator board comes from the polled snapshot, not WS frames.
+  useEffect(() => {
+    if (role.kind !== "spectator") return;
+    seedFromGameState((snap?.gameState as GomokuSnapshot | null) ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role.kind, snap]);
 
   async function confirmJoin() {
     if (!matchId || !wallet || role.kind !== "needs-confirm") return;
@@ -164,17 +172,33 @@ export function Match() {
     const you = role.you;
     const url = `${cfg.wsBase.replace(/\/$/, "")}/ws/match/${matchId}?as=${you}`;
     const ws = openWs(url, (frame) => {
-      handleFrame(frame, you);
+      handleFrame(frame);
     });
     wsRef.current = ws;
     return () => ws.close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchId, role.kind === "playing" ? role.you : null, cfg?.wsBase]);
 
-  function handleFrame(frame: ServerFrame, youSide: Side) {
+  // Re-render once a second so the deadline countdown stays live.
+  useEffect(() => {
+    if (turnDeadline === null) return;
+    const t = setInterval(() => forceTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [turnDeadline]);
+
+  function seedFromGameState(gs: GomokuSnapshot | null) {
+    if (!gs || gs.kind !== "gomoku") return;
+    setSize(gs.size);
+    setBoard(gs.board.map((row) => row.slice()));
+    setTurn(gs.turn);
+    setLastMove(gs.lastMove);
+  }
+
+  function handleFrame(frame: ServerFrame) {
     switch (frame.type) {
       case "hello":
         setSnap(frame.snapshot);
+        seedFromGameState(frame.snapshot.gameState as GomokuSnapshot | null);
         break;
       case "state":
         setSnap((s) => (s ? { ...s, state: frame.state } : s));
@@ -187,55 +211,21 @@ export function Match() {
           return s;
         });
         break;
-      case "round_start":
-        setRoundDeadline(frame.deadline);
-        setCommittedRound(null);
-        setSnap((s) => (s ? { ...s, roundIndex: frame.round } : s));
-        break;
-      case "commits_locked": {
-        // Both commits are in. Auto-send our reveal so the round resolves.
-        // The deadline countdown in MoveButtons becomes irrelevant once both
-        // sides have committed, so clear it.
-        setRoundDeadline(null);
-        const secret = secretsRef.current.get(frame.round);
-        if (secret) {
-          wsRef.current?.send({
-            type: "reveal",
-            round: frame.round,
-            move: secret.move,
-            nonce: secret.nonce,
-          });
-        }
-        // If we don't have a secret, we never committed (or lost the secret to
-        // a refresh). Server will time out our reveal and forfeit the round.
-        break;
-      }
-      case "round_result":
-        setRoundDeadline(null);
-        setSnap((s) => {
-          if (!s) return s;
-          const r: RoundResult = {
-            round: frame.round,
-            a: youSide === "a" ? frame.yourMove : frame.theirMove,
-            b: youSide === "b" ? frame.yourMove : frame.theirMove,
-            winner: frame.winner,
-            forfeitedBy: frame.forfeitedBy,
-          };
-          return { ...s, rounds: [...s.rounds, r] };
+      case "gm_move":
+        setBoard((b) => {
+          const next = b.map((row) => row.slice());
+          if (next[frame.y]) next[frame.y][frame.x] = frame.by;
+          return next;
         });
-        // Quick green/red flash. Ties get nothing — they're common in RPS and
-        // a neutral flash would just be noise.
-        if (youSide && frame.winner !== "tie") {
-          setFlash({
-            kind: frame.winner === youSide ? "win" : "loss",
-            key: frame.round,
-          });
-        }
-        // Round secret is no longer needed once the round has resolved.
-        secretsRef.current.delete(frame.round);
+        setLastMove({ x: frame.x, y: frame.y, by: frame.by });
+        break;
+      case "gm_turn":
+        setTurn(frame.turn);
+        setTurnDeadline(frame.deadline);
         break;
       case "match_result":
-        setSnap((s) => (s ? { ...s, winner: frame.winner, rounds: frame.rounds, state: "complete" } : s));
+        setTurnDeadline(null);
+        setSnap((s) => (s ? { ...s, winner: frame.winner, state: "complete" } : s));
         break;
       case "tx":
         setTxEvents((prev) => [
@@ -244,14 +234,17 @@ export function Match() {
         ]);
         break;
       case "done":
+        setTurnDeadline(null);
         setSnap((s) =>
           s ? { ...s, state: "done", signatures: frame.finalSignatures, winner: frame.winner } : s,
         );
         break;
       case "cancelled":
+        setTurnDeadline(null);
         setSnap((s) => (s ? { ...s, state: "cancelled" } : s));
         break;
       case "failed":
+        setTurnDeadline(null);
         setSnap((s) => (s ? { ...s, state: "failed", failedReason: frame.reason } : s));
         break;
       case "error":
@@ -260,23 +253,8 @@ export function Match() {
     }
   }
 
-  async function sendMove(move: Move) {
-    if (!snap || !wsRef.current) return;
-    const round = snap.roundIndex;
-    if (committedRound === round) return;
-    // Optimistically lock the buttons before the await so a double-click
-    // can't fire two commits.
-    setCommittedRound(round);
-    try {
-      const nonce = newNonce();
-      const hash = await commitHash(move, nonce);
-      secretsRef.current.set(round, { move, nonce });
-      wsRef.current.send({ type: "commit", round, commitHash: hash });
-    } catch (err) {
-      // Hashing failed (extremely unlikely). Roll back so the user can retry.
-      setCommittedRound(null);
-      console.error("commit hash failed", err);
-    }
+  function placeStone(x: number, y: number) {
+    wsRef.current?.send({ type: "place", x, y });
   }
 
   const shareUrl = useMemo(() => `${location.origin}/match/${matchId}`, [matchId]);
@@ -391,22 +369,22 @@ export function Match() {
   if (!snap || role.kind === "loading") return <div className="card">Loading match…</div>;
 
   const inPlay = snap.state === "active";
-  const moved = committedRound === snap.roundIndex;
   const you = role.kind === "playing" ? role.you : null;
+  const yourTurn = inPlay && you !== null && turn === you;
+  const spectating = role.kind === "spectator";
+  const turnLabel = spectating
+    ? turn
+      ? `Player ${turn === "a" ? "A" : "B"} to move`
+      : "—"
+    : yourTurn
+      ? "Your move"
+      : "Opponent's move";
 
   return (
     <div className="match">
-      {flash && (
-        <div
-          key={flash.key}
-          className={`round-flash round-flash--${flash.kind}`}
-          aria-hidden="true"
-          onAnimationEnd={() => setFlash(null)}
-        />
-      )}
       <MatchHeader snap={snap} you={you} matchId={matchId} shareUrl={shareUrl} />
 
-      {role.kind === "spectator" && (
+      {spectating && (
         <div className="card spectator-note">
           <span className="dim small">
             Spectating —{" "}
@@ -448,18 +426,33 @@ export function Match() {
         </div>
       )}
 
-      {inPlay && role.kind === "playing" && (
-        <MoveButtons
-          round={snap.roundIndex}
-          deadline={roundDeadline}
-          disabled={moved}
-          onMove={sendMove}
-        />
+      {inPlay && (
+        <div className="card gomoku-play">
+          <div className="gomoku-status">
+            <span className={`gomoku-turn ${yourTurn ? "gomoku-turn--you" : "gomoku-turn--opp"}`}>
+              {turnLabel}
+            </span>
+            <TurnCountdown deadline={turnDeadline} />
+          </div>
+          <Board
+            size={size}
+            board={board}
+            you={you}
+            lastMove={lastMove}
+            interactive={yourTurn}
+            onPlace={placeStone}
+          />
+          <p className="dim small gomoku-hint">
+            {spectating
+              ? "You're watching this match live. First to five in a row wins."
+              : yourTurn
+                ? "Tap an empty spot to place your stone. First to five in a row wins."
+                : "Waiting for your opponent to move."}
+          </p>
+        </div>
       )}
 
-      <RoundList rounds={snap.rounds} you={you} />
-
-      {snap.winner !== null && <Outcome snap={snap} you={you} />}
+      {snap.winner !== null && <GomokuOutcome snap={snap} you={you} />}
 
       {snap.state !== "active" &&
         snap.state !== "partnered" &&
@@ -478,6 +471,76 @@ export function Match() {
           cluster={cfg?.explorerCluster ?? "mainnet"}
         />
       )}
+    </div>
+  );
+}
+
+/** Live mm:ss countdown to a deadline (epoch seconds, matching the server's
+ *  nowSec() clock — same convention RPS uses). Goes amber under 10s. */
+function TurnCountdown({ deadline }: { deadline: number | null }) {
+  if (deadline === null) return null;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const totalSec = Math.max(0, deadline - nowSec);
+  const mm = Math.floor(totalSec / 60);
+  const ss = totalSec % 60;
+  const danger = totalSec <= 10;
+  return (
+    <span className={`countdown ${danger ? "danger" : ""}`}>
+      {mm}:{ss.toString().padStart(2, "0")}
+    </span>
+  );
+}
+
+/** Win/loss/tie hero for Gomoku, mirroring the RPS Outcome's color contract. */
+function GomokuOutcome({ snap, you }: { snap: MatchSnapshot; you: Side | null }) {
+  const winner = snap.winner;
+  if (!winner) return null;
+
+  if (winner === "tie") {
+    return (
+      <div className="hero hero--tie">
+        <div className="hero__verdict">It's a draw</div>
+        <div className="hero__sub">
+          No five in a row. Your match is being cancelled and any setup costs refunded.
+        </div>
+      </div>
+    );
+  }
+
+  const youWon = you === winner;
+  const winnerSlot = winner === "a" ? snap.playerA : snap.playerB;
+  const loserSlot = winner === "a" ? snap.playerB : snap.playerA;
+
+  return (
+    <div className={`hero ${youWon ? "hero--win" : "hero--loss"}`}>
+      <div className="hero__verdict">{youWon ? "🏆 You won!" : "💀 You lost"}</div>
+      <div className="hero__sub">
+        {youWon ? (
+          <>
+            You got five in a row
+            {loserSlot && (
+              <>
+                {" "}against{" "}
+                <code>
+                  {loserSlot.wallet.slice(0, 6)}…{loserSlot.wallet.slice(-4)}
+                </code>
+              </>
+            )}
+            .
+          </>
+        ) : (
+          <>
+            {winnerSlot && (
+              <>
+                <code>
+                  {winnerSlot.wallet.slice(0, 6)}…{winnerSlot.wallet.slice(-4)}
+                </code>{" "}
+              </>
+            )}
+            got five in a row first.
+          </>
+        )}
+      </div>
     </div>
   );
 }

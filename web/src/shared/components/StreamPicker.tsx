@@ -10,9 +10,9 @@
  */
 
 import { useEffect, useState } from "react";
-import { api } from "../../../shared/api";
-import { formatToken } from "../../../shared/format";
-import type { TokenMetaPublic } from "../../../shared/types";
+import { api } from "../api";
+import { formatToken } from "../format";
+import type { TokenMetaPublic } from "../types";
 
 function shortStream(s: string) {
   return s.length > 14 ? `${s.slice(0, 8)}…${s.slice(-4)}` : s;

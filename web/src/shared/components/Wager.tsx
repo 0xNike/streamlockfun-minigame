@@ -4,8 +4,8 @@
  * absolute amount; falls back to bps-only intent display when not.
  */
 
-import type { TokenMetaPublic, WagerSnapshotPublic } from "../../../shared/types";
-import { formatToken } from "../../../shared/format";
+import type { TokenMetaPublic, WagerSnapshotPublic } from "../types";
+import { formatToken } from "../format";
 
 function shortMint(s: string) {
   return s.length > 16 ? `${s.slice(0, 8)}…${s.slice(-6)}` : s;

@@ -16,7 +16,14 @@
 
 import type WebSocket from "ws";
 import type { Logger } from "../log.js";
-import type { ClientFrame, ErrorCode, RoundResult, ServerFrame, Side } from "../types.js";
+import type {
+  ClientFrame,
+  ErrorCode,
+  GameStateSnapshot,
+  RoundResult,
+  ServerFrame,
+  Side,
+} from "../types.js";
 
 /** The slice of the match shell an engine is allowed to touch. */
 export interface GameHost {
@@ -39,6 +46,9 @@ export interface GameHost {
 export interface GameProgress {
   roundIndex: number;
   rounds: RoundResult[];
+  /** Game-specific snapshot state (e.g. the Gomoku board). Omit for round-based
+   *  games whose state is fully captured by roundIndex + rounds (RPS). */
+  state?: GameStateSnapshot | null;
 }
 
 export interface GameEngine {

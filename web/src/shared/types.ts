@@ -65,8 +65,21 @@ export type WagerSnapshotPublic = {
   bpsIfBLoses: number;
 };
 
+// Per-game snapshot state (mirrors the server). Grows into a union on `kind`.
+export type GomokuSnapshot = {
+  kind: "gomoku";
+  size: number;
+  /** Row-major grid, board[y][x]; each cell is the side that played it, or null. */
+  board: (Side | null)[][];
+  turn: Side;
+  lastMove: { x: number; y: number; by: Side } | null;
+};
+export type GameStateSnapshot = GomokuSnapshot;
+
 export type MatchSnapshot = {
   matchId: string;
+  /** Which game this match plays ("rps" | "gomoku"). Drives client routing. */
+  gameId: string;
   state: MatchState;
   pda: string | null;
   tokenMint: string;
@@ -75,6 +88,8 @@ export type MatchSnapshot = {
   playerB: PlayerSlotSnapshot | null;
   roundIndex: number;
   rounds: RoundResult[];
+  /** Game-specific play state (e.g. the Gomoku board); null for RPS. */
+  gameState: GameStateSnapshot | null;
   winner: Side | "tie" | null;
   endTs: number | null;
   disputeWindowSec: number;
@@ -111,6 +126,8 @@ export type ServerFrame =
       forfeitedBy?: Side | "both";
     }
   | { type: "match_result"; ts: number; winner: Side | "tie"; rounds: RoundResult[] }
+  | { type: "gm_move"; ts: number; by: Side; x: number; y: number }
+  | { type: "gm_turn"; ts: number; turn: Side; deadline: number }
   | {
       type: "tx";
       ts: number;
@@ -141,6 +158,7 @@ export type ClientFrame =
   | { type: "commit"; round: number; commitHash: string }
   | { type: "reveal"; round: number; move: Move; nonce: string }
   | { type: "forfeit_round"; round: number }
+  | { type: "place"; x: number; y: number }
   | { type: "request_resync" }
   | { type: "pong" }
   | { type: "leave" };
