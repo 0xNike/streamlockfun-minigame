@@ -49,33 +49,10 @@ const GAMES: Game[] = [
 // Only surface games people can actually play right now.
 const PLAYABLE_GAMES = GAMES.filter((g) => g.status !== "coming-soon" && !!g.href);
 
-const STATUS_STYLES: Record<GameStatus, string> = {
-  live: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
-  beta: "bg-amber-500/15 text-amber-300 border-amber-500/30",
-  "coming-soon": "bg-zinc-700/30 text-zinc-400 border-zinc-600/30",
-};
-
-const STATUS_LABELS: Record<GameStatus, string> = {
-  live: "Live",
-  beta: "Beta",
-  "coming-soon": "Coming soon",
-};
-
-function StatusPill({ status }: { status: GameStatus }) {
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${STATUS_STYLES[status]}`}
-    >
-      <span className="h-1.5 w-1.5 rounded-full bg-current" />
-      {STATUS_LABELS[status]}
-    </span>
-  );
-}
-
 function GameCard({ game }: { game: Game }) {
   const isExternal = !!game.href && game.href.startsWith("http");
   const cardClass =
-    "group block overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40 transition-colors hover:border-emerald-500/40 hover:bg-zinc-900/70";
+    "group block overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40 transition-colors hover:border-orange-500/40 hover:bg-zinc-900/70";
 
   const inner = (
     <>
@@ -93,9 +70,6 @@ function GameCard({ game }: { game: Game }) {
             </div>
           </div>
         )}
-        <div className="absolute right-3 top-3">
-          <StatusPill status={game.status} />
-        </div>
       </div>
       <div className="p-5">
         <div className="mb-1 flex items-start justify-between gap-3">
@@ -127,7 +101,7 @@ function GameCard({ game }: { game: Game }) {
             </span>
           ))}
         </div>
-        <div className="mt-4 text-xs font-medium text-emerald-400 group-hover:text-emerald-300">
+        <div className="mt-4 text-xs font-medium text-orange-400 group-hover:text-orange-300">
           Play →
         </div>
       </div>
@@ -184,8 +158,8 @@ export function Explore() {
           )}
         </Section>
 
-        <Section className="rounded-xl border border-emerald-500/20 bg-gradient-to-br from-emerald-500/5 to-zinc-900/40 p-6 md:p-8">
-          <div className="mb-2 text-[11px] font-medium uppercase tracking-wider text-emerald-400">
+        <Section className="rounded-xl border border-orange-500/20 bg-gradient-to-br from-orange-500/5 to-zinc-900/40 p-6 md:p-8">
+          <div className="mb-2 text-[11px] font-medium uppercase tracking-wider text-orange-400">
             For builders
           </div>
           <h2 className="mb-3 text-xl font-semibold tracking-tight text-zinc-100 md:text-2xl">
@@ -198,7 +172,7 @@ export function Explore() {
           <div className="flex flex-wrap gap-3">
             <a
               href="https://app.streamlock.fun/how-it-works"
-              className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-medium text-zinc-950 transition-colors hover:bg-emerald-400"
+              className="rounded-xl bg-orange-500 px-4 py-2 text-sm font-medium text-zinc-950 transition-colors hover:bg-orange-400"
             >
               How it works
             </a>

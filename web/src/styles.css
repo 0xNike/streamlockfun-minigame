@@ -1,21 +1,23 @@
 :root {
   color-scheme: dark;
-  /* In-house game palette: shares the games-hub's dark + emerald language so the
-     whole product (hub → RPS → match) reads as one surface. Tokens mirror the
-     hub's Tailwind zinc/emerald scale; emerald is the single accent across the
-     header pill and every in-house game's primary actions. */
+  /* In-house game palette: shares the games-hub's dark surface + orange accent so
+     the whole product (hub → RPS → match) reads as one surface. Tokens mirror the
+     hub's Tailwind zinc scale; orange (the Games identity, distinct from the
+     parent app's green) is the single accent across the header pill and every
+     in-house game's primary actions, with cool blue as the neutral/settling lane. */
   --bg: #000000;
   --panel: #18181b;         /* zinc-900 — card surface */
   --panel2: #27272a;        /* zinc-800 — inset / control surface */
   --border: #3f3f46;        /* zinc-700 — visible 1px definition on black */
   --text: #f4f4f5;          /* zinc-100 */
   --dim: #a1a1aa;           /* zinc-400 */
-  --accent: #10b981;        /* emerald-500 — primary action, matches hub identity */
-  --accent-strong: #059669; /* emerald-600 — hover state */
-  --accent2: #fbbf24;       /* amber-400 — secondary / settling / tie pop */
-  --green: #34d399;         /* emerald-400 — win (brighter than accent for pop) */
+  --accent: #F97316;        /* orange-500 — primary action; the Games identity, distinct from the parent app's green */
+  --accent-strong: #ea580c; /* orange-600 — hover state */
+  --accent2: #fbbf24;       /* amber-400 — neutral highlight (e.g. gomoku last move) */
+  --green: #34d399;         /* emerald-400 — win */
   --red: #f87171;           /* red-400 — loss */
-  --amber: #fbbf24;         /* amber-400 — tie / settling */
+  --info: #4C82E0;          /* cool blue — tie / settling / neutral "in progress"; the calm counterpart to orange "act" */
+  --amber: #fbbf24;         /* amber-400 — urgency / caution only (low-time countdown, anti-cheat hold, cancel) */
   --anchor: #0b0b0d;        /* header bar — top of the dark surface */
   --anchor-dim: #a1a1aa;    /* dim nav text inside the header */
 
@@ -27,7 +29,7 @@
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 12px -6px rgba(0, 0, 0, 0.5);
-  --shadow-lg: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 32px -12px rgba(16, 185, 129, 0.28);
+  --shadow-lg: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 32px -12px rgba(249, 115, 22, 0.28);
 
   --font-display: "Plus Jakarta Sans", ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-body: ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -92,8 +94,8 @@ html, body, #root {
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: #06140d;
-  background: #10b981; /* emerald — the Games identity, consistent on every route */
+  color: #1a0d02;
+  background: #F97316; /* orange — the Games identity, consistent on every route */
   padding: 4px 10px;
   border-radius: 999px;
   line-height: 1;
@@ -187,7 +189,7 @@ code, .share-url { overflow-wrap: anywhere; word-break: break-word; }
 }
 .intro__moves span {
   display: inline-block;
-  filter: drop-shadow(0 4px 12px rgba(16, 185, 129, 0.18));
+  filter: drop-shadow(0 4px 12px rgba(249, 115, 22, 0.18));
 }
 .intro__title {
   font-family: var(--font-display);
@@ -303,9 +305,9 @@ button:where(:not(.games-hub *):not(.header__link):not(.header__burger):not(.gom
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #06140d; /* dark text on emerald — matches the hub's emerald CTAs + brand pill */
+  color: #1a0d02; /* dark text on orange — matches the hub's orange CTAs + brand pill */
   font-weight: 700;
-  box-shadow: 0 1px 2px rgba(16, 185, 129, 0.18), 0 6px 16px -8px rgba(16, 185, 129, 0.4);
+  box-shadow: 0 1px 2px rgba(249, 115, 22, 0.18), 0 6px 16px -8px rgba(249, 115, 22, 0.4);
 }
 button.primary:hover:not(:disabled) { background: var(--accent-strong); border-color: var(--accent-strong); }
 button.link {
@@ -316,7 +318,7 @@ button.link {
   box-shadow: none;
 }
 button.link:hover:not(:disabled) {
-  background: rgba(16, 185, 129, 0.08);
+  background: rgba(249, 115, 22, 0.08);
   border-color: transparent;
   text-decoration: none;
 }
@@ -365,8 +367,8 @@ button.link:hover:not(:disabled) {
   background: currentColor;
   opacity: 0.6;
 }
-.state-pill--active   { color: var(--accent); background: rgba(16, 185, 129, 0.10); border-color: rgba(16, 185, 129, 0.25); }
-.state-pill--settling { color: var(--accent2); background: rgba(251, 191, 36, 0.12); border-color: rgba(251, 191, 36, 0.30); }
+.state-pill--active   { color: var(--accent); background: rgba(249, 115, 22, 0.10); border-color: rgba(249, 115, 22, 0.25); }
+.state-pill--settling { color: var(--info); background: rgba(76, 130, 224, 0.14); border-color: rgba(76, 130, 224, 0.35); }
 .state-pill--done     { color: var(--green); background: rgba(52, 211, 153, 0.12); border-color: rgba(52, 211, 153, 0.30); }
 .state-pill--bad      { color: var(--red); background: rgba(248, 113, 113, 0.10); border-color: rgba(248, 113, 113, 0.30); }
 
@@ -379,7 +381,7 @@ button.link:hover:not(:disabled) {
   padding: 12px;
   min-height: 70px;
 }
-.player.is-you { border-color: var(--accent); background: rgba(16, 185, 129, 0.12); }
+.player.is-you { border-color: var(--accent); background: rgba(249, 115, 22, 0.12); }
 .player.off { opacity: 0.55; }
 .player__label { font-family: var(--font-display); font-weight: 600; font-size: 14px; }
 .player__addr { font-family: ui-monospace, monospace; font-size: 12px; color: var(--dim); margin-top: 2px; }
@@ -405,7 +407,7 @@ button.link:hover:not(:disabled) {
   font-weight: 600;
 }
 .countdown { font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; color: var(--dim); }
-.countdown.danger { color: var(--accent2); font-weight: 600; }
+.countdown.danger { color: var(--amber); font-weight: 600; }
 
 /* ── Gomoku board ──────────────────────────────────────────────────────── */
 .gomoku-play { display: flex; flex-direction: column; gap: 12px; }
@@ -447,7 +449,7 @@ button.link:hover:not(:disabled) {
   transition: background 0.12s ease, border-color 0.12s ease;
 }
 .gomoku-cell--clickable { cursor: pointer; }
-.gomoku-cell--clickable:hover { background: rgba(16, 185, 129, 0.12); border-color: var(--accent); }
+.gomoku-cell--clickable:hover { background: rgba(249, 115, 22, 0.12); border-color: var(--accent); }
 .gomoku-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .gomoku-cell:disabled { cursor: default; }
 
@@ -458,7 +460,7 @@ button.link:hover:not(:disabled) {
   box-shadow: var(--shadow-sm);
 }
 .gomoku-cell--you .gomoku-stone { background: var(--accent); }
-.gomoku-cell--opp .gomoku-stone { background: var(--red); }
+.gomoku-cell--opp .gomoku-stone { background: var(--info); }
 .gomoku-cell--last { border-color: var(--accent2); box-shadow: inset 0 0 0 2px var(--accent2); }
 
 @media (max-width: 600px) {
@@ -518,7 +520,7 @@ button.link:hover:not(:disabled) {
 .round__num { color: var(--dim); font-family: ui-monospace, monospace; }
 .round.win  { border-color: var(--green); background: rgba(52, 211, 153, 0.13); }
 .round.loss { border-color: var(--red); background: rgba(248, 113, 113, 0.13); }
-.round.tie  { border-color: var(--amber); background: rgba(251, 191, 36, 0.13); }
+.round.tie  { border-color: var(--info); background: rgba(76, 130, 224, 0.15); }
 .round__verdict { text-align: right; font-size: 12px; color: var(--dim); font-family: var(--font-display); font-weight: 600; }
 
 /* ───────── Settlement progress ───────── */
@@ -630,8 +632,8 @@ button.link:hover:not(:disabled) {
   border-color: var(--red);
 }
 .hero--tie {
-  background: radial-gradient(ellipse at top, rgba(251, 191, 36, 0.16), transparent 60%), var(--panel);
-  border-color: var(--amber);
+  background: radial-gradient(ellipse at top, rgba(76, 130, 224, 0.18), transparent 60%), var(--panel);
+  border-color: var(--info);
 }
 .hero__verdict {
   font-family: var(--font-display);
@@ -643,7 +645,7 @@ button.link:hover:not(:disabled) {
 }
 .hero--win  .hero__verdict { color: var(--green); }
 .hero--loss .hero__verdict { color: var(--red); }
-.hero--tie  .hero__verdict { color: var(--amber); }
+.hero--tie  .hero__verdict { color: var(--info); }
 .hero__score {
   font-family: ui-monospace, monospace;
   font-variant-numeric: tabular-nums;
@@ -701,12 +703,12 @@ button.link:hover:not(:disabled) {
 /* ───────── Settlement progress ───────── */
 .settle__head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
 .settle__title { font-family: var(--font-display); font-size: 16px; font-weight: 600; }
-.settle__countdown { font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; color: var(--amber); font-weight: 600; }
+.settle__countdown { font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; color: var(--info); font-weight: 600; }
 .settle__step-num { font-size: 12px; color: var(--dim); font-family: ui-monospace, monospace; }
 .settle__bar { height: 6px; background: var(--panel2); border-radius: 999px; overflow: hidden; margin-bottom: 14px; }
 .settle__bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  background: var(--info); /* solid blue — settling is the calm, in-progress lane */
   border-radius: 999px;
   transition: width 0.4s ease;
 }
@@ -721,17 +723,17 @@ button.link:hover:not(:disabled) {
 }
 .settle__step.done .settle__step-dot { background: var(--green); border-color: var(--green); }
 .settle__step.active .settle__step-dot {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--info);
+  border-color: var(--info);
   position: relative;
-  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.18);
+  box-shadow: 0 0 0 4px rgba(76, 130, 224, 0.18);
 }
 .settle__step-spinner {
   position: absolute;
   inset: -8px;
   border-radius: 50%;
   border: 2px solid transparent;
-  border-top-color: var(--accent);
+  border-top-color: var(--info);
   animation: spin 1s linear infinite;
   pointer-events: none;
 }
@@ -849,18 +851,29 @@ button.link:hover:not(:disabled) {
 
   /* Brand + burger share the top line; the nav drops to a full-width panel
      below, shown only when the burger is open. */
-  .header__burger { display: inline-flex; order: 2; }
+  .header__burger { display: inline-flex; order: 2; min-width: 44px; min-height: 44px; }
   .header__actions {
     display: none;
     order: 3;
     width: 100%;
     flex-direction: column;
     align-items: flex-start;
-    gap: 14px;
-    padding-top: 12px;
+    gap: 4px;
+    padding-top: 8px;
     border-top: 1px solid #1d1d20;
   }
   .header__actions[data-open="true"] { display: flex; }
+
+  /* Comfortable 44px tap targets in the collapsed menu column — the desktop
+     nav items are bare inline text/buttons, too small to tap reliably on a phone. */
+  .header__actions .header__link,
+  .header__actions .header__cta {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 44px;
+  }
+  .header__actions .header__cta { justify-content: center; }
 
   h1 { font-size: 22px; }
   h2 { font-size: 16px; }

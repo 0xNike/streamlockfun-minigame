@@ -56,10 +56,10 @@ The first game is best-of-three Rock-Paper-Scissors with commit-reveal, World ID
 **In-house game design contract.** Every in-house game page must read as one continuous product with the hub, so the shell never shifts between routes:
 
 - *Shell.* Render inside the shared `App` header + 760px `.app` column. Don't ship a per-game header — there is one universal bar.
-- *Surface & accent.* Black background, `zinc-900` panels (`--panel`) with `zinc-700` borders (`--border`), and **emerald** (`--accent`, `#10b981`) as the only interactive accent — matching the header's "Games" pill and the hub's CTAs. Primary buttons are emerald with **dark** text (`#06140d`), never white.
-- *Semantics.* Win = `--green`, loss = `--red`, tie/settling = `--amber`. Reuse these tokens instead of introducing new hues.
+- *Surface & accent.* Black background, `zinc-900` panels (`--panel`) with `zinc-700` borders (`--border`), and **orange** (`--accent`, `#F97316`) as the only interactive accent — matching the header's "Games" pill and the hub's CTAs. Orange is the Games identity, deliberately distinct from the parent app's green. Primary buttons are orange with **dark** text (`#1a0d02`), never white.
+- *Semantics.* Win = `--green`, loss = `--red`, tie/settling = `--info` (cool blue — the calm "wait/neutral" lane). `--amber` is reserved for urgency only (low-time countdown, anti-cheat hold, cancel). Reuse these tokens instead of introducing new hues.
 
-The palette lives in `web/src/styles.css` `:root`. A new game that styles with these tokens (or the hub's Tailwind `zinc`/`emerald` utilities) inherits the look for free — keep them as the single source of truth rather than hard-coding colors per game.
+The palette lives in `web/src/styles.css` `:root`. A new game that styles with these tokens (or the hub's Tailwind `zinc`/`orange` utilities) inherits the look for free — keep them as the single source of truth rather than hard-coding colors per game.
 
 ## Setup
 
