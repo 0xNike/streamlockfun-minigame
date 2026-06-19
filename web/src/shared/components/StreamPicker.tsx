@@ -53,9 +53,14 @@ export function StreamPicker({
     void api
       .getMyStreams(wallet, tokenMint)
       .then((res) => {
-        setStreams(res.streams);
-        if (res.streams.length === 1) onChange(res.streams[0]);
-        else if (value && !res.streams.some((s) => s.streamId === value)) {
+        // Only streams the wallet actually owns a share of are stakeable. A
+        // stream with effectiveBps 0 is held-of-record but 0%-owned; hide it so
+        // it can't be selected (the operator also rejects it authoritatively).
+        // Keep null effectiveBps (ownership unknown / transient miss).
+        const owned = res.streams.filter((s) => s.effectiveBps == null || s.effectiveBps > 0);
+        setStreams(owned);
+        if (owned.length === 1) onChange(owned[0]);
+        else if (value && !owned.some((s) => s.streamId === value)) {
           onChange(null);
         }
       })
