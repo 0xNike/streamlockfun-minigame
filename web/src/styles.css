@@ -611,6 +611,34 @@ button.link:hover:not(:disabled) {
 .stake-math__outcome.loss .stake-math__outcome-label { color: var(--red); }
 @media (max-width: 600px) { .stake-math__outcomes { grid-template-columns: 1fr; } }
 
+/* ───────── Predicted wager ─────────
+   Pre-join preview inset shown inside the join-confirm card. Styled as a
+   panel2 inset so the "Predicted wager" block reads as a distinct callout
+   rather than unstyled text crammed against the stream picker. */
+.predicted {
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+.predicted > * + * { margin-top: 4px; }
+.predicted__title {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+  margin-bottom: 6px;
+}
+.predicted__amount { font-size: 14px; line-height: 1.5; color: var(--text); }
+.predicted__amount strong { color: var(--text); font-weight: 600; }
+.predicted .dim { line-height: 1.5; }
+/* Hard-reject variant: the server will refuse this join (cohort band exceeded). */
+.predicted--reject { border-color: var(--red); background: rgba(248, 113, 113, 0.08); }
+.predicted--reject .predicted__title { color: var(--red); }
+
 /* ───────── Hero verdict ───────── */
 .hero {
   position: relative;
