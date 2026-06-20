@@ -66,14 +66,6 @@ export type WagerSnapshotPublic = {
 };
 
 // Per-game snapshot state (mirrors the server). Grows into a union on `kind`.
-export type GomokuSnapshot = {
-  kind: "gomoku";
-  size: number;
-  /** Row-major grid, board[y][x]; each cell is the side that played it, or null. */
-  board: (Side | null)[][];
-  turn: Side;
-  lastMove: { x: number; y: number; by: Side } | null;
-};
 export type ReversiSnapshot = {
   kind: "reversi";
   size: number;
@@ -83,11 +75,11 @@ export type ReversiSnapshot = {
   lastMove: { x: number; y: number; by: Side } | null;
   counts: { a: number; b: number };
 };
-export type GameStateSnapshot = GomokuSnapshot | ReversiSnapshot;
+export type GameStateSnapshot = ReversiSnapshot;
 
 export type MatchSnapshot = {
   matchId: string;
-  /** Which game this match plays ("rps" | "gomoku"). Drives client routing. */
+  /** Which game this match plays ("rps" | "reversi"). Drives client routing. */
   gameId: string;
   state: MatchState;
   pda: string | null;
@@ -97,7 +89,7 @@ export type MatchSnapshot = {
   playerB: PlayerSlotSnapshot | null;
   roundIndex: number;
   rounds: RoundResult[];
-  /** Game-specific play state (e.g. the Gomoku board); null for RPS. */
+  /** Game-specific play state (e.g. the Reversi board); null for RPS. */
   gameState: GameStateSnapshot | null;
   winner: Side | "tie" | null;
   endTs: number | null;
@@ -135,8 +127,6 @@ export type ServerFrame =
       forfeitedBy?: Side | "both";
     }
   | { type: "match_result"; ts: number; winner: Side | "tie"; rounds: RoundResult[] }
-  | { type: "gm_move"; ts: number; by: Side; x: number; y: number }
-  | { type: "gm_turn"; ts: number; turn: Side; deadline: number }
   | { type: "rv_move"; ts: number; by: Side; x: number; y: number; flipped: { x: number; y: number }[] }
   | { type: "rv_turn"; ts: number; turn: Side; deadline: number; autoPassed?: Side }
   | {

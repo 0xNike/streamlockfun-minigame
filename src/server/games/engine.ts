@@ -46,7 +46,7 @@ export interface GameHost {
 export interface GameProgress {
   roundIndex: number;
   rounds: RoundResult[];
-  /** Game-specific snapshot state (e.g. the Gomoku board). Omit for round-based
+  /** Game-specific snapshot state (e.g. the Reversi board). Omit for round-based
    *  games whose state is fully captured by roundIndex + rounds (RPS). */
   state?: GameStateSnapshot | null;
 }

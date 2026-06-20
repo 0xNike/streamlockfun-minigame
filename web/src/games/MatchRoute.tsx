@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../shared/api";
 import { Match as RpsMatch } from "./rps/Match";
-import { Match as GomokuMatch } from "./gomoku/Match";
 import { Match as ReversiMatch } from "./reversi/Match";
 
 /**
@@ -43,8 +42,6 @@ export function MatchRoute() {
 
   return gameId === "reversi" ? (
     <ReversiMatch />
-  ) : gameId === "gomoku" ? (
-    <GomokuMatch />
   ) : (
     <RpsMatch />
   );

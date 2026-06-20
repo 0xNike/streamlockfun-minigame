@@ -23,10 +23,8 @@ const Schema = z.object({
   // Reveal-phase deadline: once both commits are in, how long each player has
   // to send (move, nonce). A revealed-but-unrevealing player forfeits the round.
   REVEAL_DEADLINE_SEC: z.coerce.number().int().positive().default(15),
-  // Gomoku per-move deadline: a player who doesn't place a stone in time
+  // Reversi per-move deadline: a player who doesn't place a disc in time
   // forfeits the match to their opponent.
-  GOMOKU_MOVE_DEADLINE_SEC: z.coerce.number().int().positive().default(30),
-  // Reversi per-move deadline: same forfeit-on-timeout rule.
   REVERSI_MOVE_DEADLINE_SEC: z.coerce.number().int().positive().default(30),
   RECONNECT_GRACE_SEC: z.coerce.number().int().nonnegative().default(30),
   STAKE_BPS: z.coerce.number().int().positive().max(10000).default(1000),
