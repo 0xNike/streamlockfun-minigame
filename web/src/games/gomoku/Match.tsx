@@ -18,6 +18,7 @@ import { StreamPicker, type StreamRow } from "../../shared/components/StreamPick
 import { StakeMath } from "../../shared/components/StakeMath";
 import { MatchEndCTA } from "../../shared/components/MatchEndCTA";
 import { PredictedWager } from "../../shared/components/PredictedWager";
+import { ResignButton } from "../../shared/components/ResignButton";
 import { WorldIdGate, useIsWalletVerified } from "../../shared/worldid";
 import { Board } from "./Board";
 
@@ -449,6 +450,11 @@ export function Match() {
                 ? "Tap an empty spot to place your stone. First to five in a row wins."
                 : "Waiting for your opponent to move."}
           </p>
+          {you !== null && (
+            <div className="resign-row">
+              <ResignButton onResign={() => wsRef.current?.send({ type: "forfeit" })} />
+            </div>
+          )}
         </div>
       )}
 

@@ -313,6 +313,9 @@ export const ClientFrame = z.discriminatedUnion("type", [
   z.object({ type: z.literal("request_resync") }),
   z.object({ type: z.literal("pong") }),
   z.object({ type: z.literal("leave") }),
+  // Voluntary whole-match resign — the sender forfeits, opponent wins. Shell-
+  // handled (game-agnostic); distinct from RPS's per-round forfeit_round.
+  z.object({ type: z.literal("forfeit") }),
 ]);
 export type ClientFrame = z.infer<typeof ClientFrame>;
 

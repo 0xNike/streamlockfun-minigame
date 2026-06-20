@@ -323,6 +323,34 @@ button.link:hover:not(:disabled) {
   text-decoration: none;
 }
 
+/* Resign / forfeit — a deliberately low-key, secondary control (it ends a
+   staked match), escalating to a clear red confirm. */
+.resign-row { margin-top: 16px; display: flex; justify-content: center; }
+.resign-btn {
+  font-size: 13px;
+  padding: 7px 14px;
+  color: var(--dim);
+  box-shadow: none;
+}
+.resign-btn:hover:not(:disabled) { color: var(--red); border-color: var(--red); }
+.resign-confirm {
+  margin-top: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.resign-confirm-text { color: var(--dim); font-size: 13px; }
+.resign-yes {
+  font-size: 13px;
+  padding: 7px 14px;
+  color: var(--red);
+  border-color: var(--red);
+}
+.resign-yes:hover:not(:disabled) { background: rgba(248, 113, 113, 0.12); border-color: var(--red); }
+.resign-cancel { font-size: 13px; padding: 7px 14px; }
+
 .dim { color: var(--dim); }
 .small { font-size: 12px; }
 .center { text-align: center; }

@@ -407,6 +407,26 @@ export class LiveMatch {
     }
   }
 
+  /**
+   * Voluntary resign. A player concedes mid-play; the opponent wins and we settle
+   * exactly as for an abandonment forfeit (the loser's bps shift to the winner).
+   * Only meaningful during `active` — the Resign button is shown only then.
+   */
+  private forfeitMatch(side: Side): void {
+    if (this.state !== "active") return;
+    this.log.info({ side }, "match.resign");
+    const winner: Side = side === "a" ? "b" : "a";
+    this.winner = winner;
+    this.broadcast({
+      type: "match_result",
+      ts: nowSec(),
+      winner,
+      rounds: this.engine.progress().rounds,
+    });
+    this.transition("complete", "resign");
+    void this.runSettlement();
+  }
+
   // ───────── socket plumbing ─────────
 
   attachSocket(side: Side, socket: WebSocket): boolean {
@@ -493,6 +513,10 @@ export class LiveMatch {
         const sk = this.slot(side).socket;
         this.detachSocket(side, 1000, "voluntary leave");
         sk?.close(1000, "voluntary leave");
+        return;
+      }
+      case "forfeit": {
+        this.forfeitMatch(side);
         return;
       }
       default:

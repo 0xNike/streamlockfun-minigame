@@ -172,4 +172,6 @@ export type ClientFrame =
   | { type: "place"; x: number; y: number }
   | { type: "request_resync" }
   | { type: "pong" }
-  | { type: "leave" };
+  | { type: "leave" }
+  /** Voluntary whole-match resign — opponent wins, normal settlement runs. */
+  | { type: "forfeit" };
