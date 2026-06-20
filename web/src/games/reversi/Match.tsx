@@ -4,9 +4,9 @@ import { useWalletAddress } from "../../shared/useWalletAddress";
 import { api, type ServerConfig } from "../../shared/api";
 import { openWs, type WsClient } from "../../shared/ws";
 import type {
-  GomokuSnapshot,
   MatchSnapshot,
   PlayerSlotSnapshot,
+  ReversiSnapshot,
   ServerFrame,
   Side,
   TxKind,
@@ -18,8 +18,10 @@ import { StreamPicker, type StreamRow } from "../../shared/components/StreamPick
 import { StakeMath } from "../../shared/components/StakeMath";
 import { MatchEndCTA } from "../../shared/components/MatchEndCTA";
 import { PredictedWager } from "../../shared/components/PredictedWager";
+import { ResignButton } from "../../shared/components/ResignButton";
 import { WorldIdGate, useIsWalletVerified } from "../../shared/worldid";
 import { Board } from "./Board";
+import * as rules from "./rules";
 
 interface TxEvent {
   kind: TxKind;
@@ -36,11 +38,7 @@ type Role =
   | { kind: "needs-confirm"; snapshot: MatchSnapshot } // wallet not yet a participant; show join prompt
   | { kind: "playing"; you: Side };
 
-const DEFAULT_SIZE = 15;
-
-function emptyBoard(size: number): (Side | null)[][] {
-  return Array.from({ length: size }, () => Array.from({ length: size }, () => null));
-}
+const SIZE = rules.SIZE;
 
 export function Match() {
   const { id: matchId } = useParams<{ id: string }>();
@@ -53,13 +51,14 @@ export function Match() {
   const [joining, setJoining] = useState(false);
   const [joinerStream, setJoinerStream] = useState<StreamRow | null>(null);
   const [txEvents, setTxEvents] = useState<TxEvent[]>([]);
-  // Gomoku play state, seeded from the GomokuSnapshot on `hello` and advanced by
-  // gm_move / gm_turn frames. Kept locally so the grid updates immediately.
-  const [size, setSize] = useState(DEFAULT_SIZE);
-  const [board, setBoard] = useState<(Side | null)[][]>(() => emptyBoard(DEFAULT_SIZE));
+  // Reversi play state, seeded from the ReversiSnapshot on `hello` and advanced
+  // by rv_move / rv_turn frames. Kept locally so the grid updates immediately.
+  const [board, setBoard] = useState<(Side | null)[][]>(() => rules.initialBoard());
   const [turn, setTurn] = useState<Side | null>(null);
+  const [counts, setCounts] = useState<{ a: number; b: number }>({ a: 2, b: 2 });
   const [lastMove, setLastMove] = useState<{ x: number; y: number; by: Side } | null>(null);
   const [turnDeadline, setTurnDeadline] = useState<number | null>(null);
+  const [passNote, setPassNote] = useState<string | null>(null);
   const [, forceTick] = useState(0);
   const wsRef = useRef<WsClient | null>(null);
   const verified = useIsWalletVerified(wallet);
@@ -139,7 +138,7 @@ export function Match() {
   // Spectator board comes from the polled snapshot, not WS frames.
   useEffect(() => {
     if (role.kind !== "spectator") return;
-    seedFromGameState((snap?.gameState as GomokuSnapshot | null) ?? null);
+    seedFromGameState((snap?.gameState as ReversiSnapshot | null) ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [role.kind, snap]);
 
@@ -186,11 +185,11 @@ export function Match() {
     return () => clearInterval(t);
   }, [turnDeadline]);
 
-  function seedFromGameState(gs: GomokuSnapshot | null) {
-    if (!gs || gs.kind !== "gomoku") return;
-    setSize(gs.size);
+  function seedFromGameState(gs: ReversiSnapshot | null) {
+    if (!gs || gs.kind !== "reversi") return;
     setBoard(gs.board.map((row) => row.slice()));
     setTurn(gs.turn);
+    setCounts(gs.counts);
     setLastMove(gs.lastMove);
   }
 
@@ -198,7 +197,7 @@ export function Match() {
     switch (frame.type) {
       case "hello":
         setSnap(frame.snapshot);
-        seedFromGameState(frame.snapshot.gameState as GomokuSnapshot | null);
+        seedFromGameState(frame.snapshot.gameState as ReversiSnapshot | null);
         break;
       case "state":
         setSnap((s) => (s ? { ...s, state: frame.state } : s));
@@ -211,17 +210,31 @@ export function Match() {
           return s;
         });
         break;
-      case "gm_move":
+      case "rv_move":
         setBoard((b) => {
           const next = b.map((row) => row.slice());
           if (next[frame.y]) next[frame.y][frame.x] = frame.by;
+          for (const p of frame.flipped) {
+            if (next[p.y]) next[p.y][p.x] = frame.by;
+          }
+          setCounts(rules.counts(next));
           return next;
         });
         setLastMove({ x: frame.x, y: frame.y, by: frame.by });
         break;
-      case "gm_turn":
+      case "rv_turn":
         setTurn(frame.turn);
         setTurnDeadline(frame.deadline);
+        if (frame.autoPassed) {
+          const you = role.kind === "playing" ? role.you : null;
+          setPassNote(
+            frame.autoPassed === you
+              ? "You had no legal move — skipped"
+              : "Opponent had no legal move — your turn again",
+          );
+        } else {
+          setPassNote(null);
+        }
         break;
       case "match_result":
         setTurnDeadline(null);
@@ -253,11 +266,21 @@ export function Match() {
     }
   }
 
-  function placeStone(x: number, y: number) {
+  function placeDisc(x: number, y: number) {
     wsRef.current?.send({ type: "place", x, y });
   }
 
   const shareUrl = useMemo(() => `${location.origin}/match/${matchId}`, [matchId]);
+
+  // Highlight the local player's legal cells only when it's their turn. Computed
+  // before any early return so hook order stays stable across renders.
+  const youSide = role.kind === "playing" ? role.you : null;
+  const itsYourTurn =
+    snap?.state === "active" && youSide !== null && turn === youSide;
+  const legal = useMemo(() => {
+    if (!itsYourTurn || youSide === null) return new Set<string>();
+    return new Set(rules.legalMoves(board, youSide).map((m) => `${m.x},${m.y}`));
+  }, [itsYourTurn, youSide, board]);
 
   if (!matchId) return <div className="card error">Missing match id.</div>;
   if (joinErr) return <div className="card error">{joinErr}</div>;
@@ -380,6 +403,10 @@ export function Match() {
       ? "Your move"
       : "Opponent's move";
 
+  // Score row, oriented to "you" when playing; A/B when spectating.
+  const yourScore = you === "a" ? counts.a : you === "b" ? counts.b : counts.a;
+  const oppScore = you === "a" ? counts.b : you === "b" ? counts.a : counts.b;
+
   return (
     <div className="match">
       <MatchHeader snap={snap} you={you} matchId={matchId} shareUrl={shareUrl} />
@@ -427,32 +454,48 @@ export function Match() {
       )}
 
       {inPlay && (
-        <div className="card gomoku-play">
-          <div className="gomoku-status">
-            <span className={`gomoku-turn ${yourTurn ? "gomoku-turn--you" : "gomoku-turn--opp"}`}>
+        <div className="card reversi-play">
+          <div className="reversi-status">
+            <span className={`reversi-turn ${yourTurn ? "reversi-turn--you" : "reversi-turn--opp"}`}>
               {turnLabel}
             </span>
             <TurnCountdown deadline={turnDeadline} />
           </div>
+          <div className="reversi-score-row" aria-label="Disc count">
+            <span className="reversi-score reversi-score--you">
+              <span className="reversi-score__chip reversi-score__chip--a" aria-hidden="true" />
+              {spectating ? "Player A" : "You"}: {yourScore}
+            </span>
+            <span className="reversi-score reversi-score--opp">
+              <span className="reversi-score__chip reversi-score__chip--b" aria-hidden="true" />
+              {spectating ? "Player B" : "Opponent"}: {oppScore}
+            </span>
+          </div>
           <Board
-            size={size}
+            size={SIZE}
             board={board}
-            you={you}
             lastMove={lastMove}
+            legal={legal}
             interactive={yourTurn}
-            onPlace={placeStone}
+            onPlace={placeDisc}
           />
-          <p className="dim small gomoku-hint">
+          {passNote && <p className="reversi-passnote small">{passNote}</p>}
+          <p className="dim small reversi-hint">
             {spectating
-              ? "You're watching this match live. First to five in a row wins."
+              ? "You're watching this match live. Most discs when the board fills wins."
               : yourTurn
-                ? "Tap an empty spot to place your stone. First to five in a row wins."
+                ? "Tap a highlighted spot to flip your opponent's discs. Most discs wins."
                 : "Waiting for your opponent to move."}
           </p>
+          {you !== null && (
+            <div className="resign-row">
+              <ResignButton onResign={() => wsRef.current?.send({ type: "forfeit" })} />
+            </div>
+          )}
         </div>
       )}
 
-      {snap.winner !== null && <GomokuOutcome snap={snap} you={you} />}
+      {snap.winner !== null && <ReversiOutcome snap={snap} you={you} counts={counts} />}
 
       {snap.state !== "active" &&
         snap.state !== "partnered" &&
@@ -476,7 +519,7 @@ export function Match() {
 }
 
 /** Live mm:ss countdown to a deadline (epoch seconds, matching the server's
- *  nowSec() clock — same convention RPS uses). Goes amber under 10s. */
+ *  nowSec() clock). Goes amber under 10s. */
 function TurnCountdown({ deadline }: { deadline: number | null }) {
   if (deadline === null) return null;
   const nowSec = Math.floor(Date.now() / 1000);
@@ -491,8 +534,16 @@ function TurnCountdown({ deadline }: { deadline: number | null }) {
   );
 }
 
-/** Win/loss/tie hero for Gomoku, mirroring the RPS Outcome's color contract. */
-function GomokuOutcome({ snap, you }: { snap: MatchSnapshot; you: Side | null }) {
+/** Win/loss/tie hero for Reversi, decided by final disc counts. */
+function ReversiOutcome({
+  snap,
+  you,
+  counts,
+}: {
+  snap: MatchSnapshot;
+  you: Side | null;
+  counts: { a: number; b: number };
+}) {
   const winner = snap.winner;
   if (!winner) return null;
 
@@ -501,7 +552,8 @@ function GomokuOutcome({ snap, you }: { snap: MatchSnapshot; you: Side | null })
       <div className="hero hero--tie">
         <div className="hero__verdict">It's a draw</div>
         <div className="hero__sub">
-          No five in a row. Your match is being cancelled and any setup costs refunded.
+          Equal discs ({counts.a}–{counts.b}). Your match is being cancelled and any setup costs
+          refunded.
         </div>
       </div>
     );
@@ -510,6 +562,8 @@ function GomokuOutcome({ snap, you }: { snap: MatchSnapshot; you: Side | null })
   const youWon = you === winner;
   const winnerSlot = winner === "a" ? snap.playerA : snap.playerB;
   const loserSlot = winner === "a" ? snap.playerB : snap.playerA;
+  const winnerDiscs = winner === "a" ? counts.a : counts.b;
+  const loserDiscs = winner === "a" ? counts.b : counts.a;
 
   return (
     <div className={`hero ${youWon ? "hero--win" : "hero--loss"}`}>
@@ -517,7 +571,7 @@ function GomokuOutcome({ snap, you }: { snap: MatchSnapshot; you: Side | null })
       <div className="hero__sub">
         {youWon ? (
           <>
-            You got five in a row
+            You finished with more discs ({winnerDiscs}–{loserDiscs})
             {loserSlot && (
               <>
                 {" "}against{" "}
@@ -537,7 +591,7 @@ function GomokuOutcome({ snap, you }: { snap: MatchSnapshot; you: Side | null })
                 </code>{" "}
               </>
             )}
-            got five in a row first.
+            finished with more discs ({winnerDiscs}–{loserDiscs}).
           </>
         )}
       </div>

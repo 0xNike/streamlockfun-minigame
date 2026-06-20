@@ -62,7 +62,7 @@ export function Home() {
         streamId: picked.streamId,
         wagerAmountRaw: wagerResult.status === "ok" ? wagerResult.amountRaw : undefined,
         verifiedOnly,
-        gameId: "gomoku",
+        gameId: "reversi",
       });
       navigate(`/match/${matchId}`);
     } catch (e) {
@@ -94,10 +94,11 @@ export function Home() {
           <span>⚫</span>
           <span>⚪</span>
         </div>
-        <h1 id="intro-title" className="intro__title">Gomoku</h1>
+        <h1 id="intro-title" className="intro__title">Reversi</h1>
         <p className="intro__sub">
-          Take turns placing stones. First to line up <strong>five in a row</strong> — across,
-          down, or diagonally — wins the {stakePct}% stake.
+          Outflank your opponent — most discs wins. Trap a row of their discs between two of
+          yours to flip them. The player with the most discs when the board fills takes the{" "}
+          {stakePct}% stake.
         </p>
       </section>
       {cfg && (

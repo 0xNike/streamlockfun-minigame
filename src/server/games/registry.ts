@@ -8,14 +8,14 @@
  */
 
 import type { GameDefinition } from "./engine.js";
-import { gomokuGame } from "./gomoku/index.js";
+import { reversiGame } from "./reversi/index.js";
 import { rpsGame } from "./rps/index.js";
 
 export const DEFAULT_GAME_ID = "rps";
 
 export const GAMES: Record<string, GameDefinition> = {
   [rpsGame.id]: rpsGame,
-  [gomokuGame.id]: gomokuGame,
+  [reversiGame.id]: reversiGame,
 };
 
 export function getGame(id: string): GameDefinition {

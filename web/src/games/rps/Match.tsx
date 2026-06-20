@@ -23,6 +23,7 @@ import { StreamPicker, type StreamRow } from "../../shared/components/StreamPick
 import { StakeMath } from "../../shared/components/StakeMath";
 import { MatchEndCTA } from "../../shared/components/MatchEndCTA";
 import { PredictedWager } from "../../shared/components/PredictedWager";
+import { ResignButton } from "../../shared/components/ResignButton";
 import { WorldIdGate, useIsWalletVerified } from "../../shared/worldid";
 
 interface TxEvent {
@@ -455,6 +456,12 @@ export function Match() {
           disabled={moved}
           onMove={sendMove}
         />
+      )}
+
+      {inPlay && role.kind === "playing" && (
+        <div className="resign-row">
+          <ResignButton onResign={() => wsRef.current?.send({ type: "forfeit" })} />
+        </div>
       )}
 
       <RoundList rounds={snap.rounds} you={you} />

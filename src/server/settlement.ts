@@ -167,6 +167,7 @@ export async function createSession(args: {
         return (
           isRateLimited(err) ||
           msg.includes("block height exceeded") ||
+          msg.includes("Blockhash not found") ||
           msg.includes("expired") ||
           msg.includes("fetch failed") ||
           msg.includes("timeout") ||
@@ -235,6 +236,7 @@ export async function submitDeltas(args: {
         return (
           isRateLimited(err) ||
           msg.includes("block height exceeded") ||
+          msg.includes("Blockhash not found") ||
           msg.includes("expired") ||
           msg.includes("fetch failed") ||
           msg.includes("timeout") ||
@@ -289,6 +291,7 @@ export async function finalizeAndApply(args: {
       // Network blips also retryable.
       return (
         isRateLimited(err) ||
+        msg.includes("Blockhash not found") ||
         msg.includes("DisputeWindowNotEnded") ||
         msg.includes("0x1780") ||
         msg.includes("fetch failed") ||
