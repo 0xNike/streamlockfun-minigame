@@ -4,7 +4,12 @@ The games platform behind [`games.streamlock.fun`](https://games.streamlock.fun)
 
 This repo is also the receipt that the Streamlock Operator SDK is a real third-party integration boundary: it consumes only `@streamlock/operator-sdk` and `@solana/web3.js`. **Zero imports from the streamlockfun monorepo.** If you can build a game with this, you can build one without ever touching Streamlock's internals.
 
-The first game is best-of-three Rock-Paper-Scissors with commit-reveal, World ID sybil gating, and amount-based wagering. Live at [games.streamlock.fun](https://games.streamlock.fun) — the hub at `/`, RPS at `/rps` — talking to [streamlockfun-minigame.fly.dev](https://streamlockfun-minigame.fly.dev) (operator).
+Two games today, both 1v1 with amount-based wagering and an optional World ID sybil gate:
+
+- **Rock-Paper-Scissors** (`/rps`) — best-of-three with commit-reveal.
+- **Reversi** (`/reversi`) — 8×8 Othello; outflank to flip, most discs wins.
+
+Live at [games.streamlock.fun](https://games.streamlock.fun) — the hub at `/` — talking to [streamlockfun-minigame.fly.dev](https://streamlockfun-minigame.fly.dev) (operator).
 
 ---
 
@@ -16,16 +21,17 @@ The first game is best-of-three Rock-Paper-Scissors with commit-reveal, World ID
 
 1. **Create.** Player A connects their wallet, picks one of their streams on the token, sets a wager amount and (optionally) toggles "Verified humans only" to require World ID. A shareable match URL is generated.
 2. **Join.** Player B visits the URL, connects a wallet, picks their stream. If verified-only is on, they're routed through World ID first (staging = simulator app; production = real World App orb-or-phone verification). A shared match snapshot is locked in: `min(lockedA, lockedB)` × stakeBps caps the prize so neither side can over-promise.
-3. **Play.** Best-of-three RPS over a WebSocket. Each round has two phases (defaults; configurable in `src/server/config.ts`):
-   - **Commit (45s):** each browser hashes `sha256(move:nonce)` and sends the hash. Neither the operator nor your opponent learns your move.
-   - **Reveal (15s):** once both commits are in, the operator broadcasts `commits_locked` and both clients auto-reveal `(move, nonce)`. The operator verifies each reveal matches its prior commit before judging.
+3. **Play.** Over a WebSocket, until someone wins. Only "what a turn is" differs per game (deadlines configurable in `src/server/config.ts`):
+   - **Rock-Paper-Scissors** — best-of-three, two phases per round. **Commit (45s):** each browser sends `sha256(move:nonce)`, so neither the operator nor your opponent learns your move. **Reveal (15s):** both clients auto-reveal `(move, nonce)` and the operator verifies each reveal against its commit before judging.
+   - **Reversi** — turn-based, 30s per move. Place a disc that outflanks the opponent's between two of yours to flip them; a side with no legal move is auto-skipped; most discs when the board fills wins.
+   - **Resign / timeout** — either player can concede the whole match anytime via the **Resign** button (opponent wins, settlement runs normally). Missing a move deadline forfeits the same way.
    
-   A missing/late commit forfeits that round to the other side. A reveal whose hash doesn't match the earlier commit is treated as a forfeit (and logged as a cheat attempt — the commit hash is in the DB). A green/red flash gives the winner/loser of each round quick feedback.
-4. **Settle.** After three rounds, the operator computes the winner, picks the bps-shift for the actual outcome (the wager snapshot stores per-outcome bps so settlement never re-derives from drifted live data), and runs the on-chain sequence: `submit deltas → wait dispute window → finalize → apply`. The dispute window defaults to 30s on Fly (`fly.toml`). Players see each transaction with a live "pending → confirmed" tag and a Solscan link.
+   In RPS, a missing/late commit forfeits that round, and a reveal whose hash doesn't match the earlier commit is treated as a forfeit (logged as a cheat attempt — the commit hash is in the DB). A quick green/red flash signals each round's result.
+4. **Settle.** Once there's a winner, the operator picks the bps-shift for the actual outcome (the wager snapshot stores per-outcome bps so settlement never re-derives from drifted live data), and runs the on-chain sequence: `submit deltas → wait dispute window → finalize → apply`. The dispute window defaults to 30s on Fly (`fly.toml`). Players see each transaction with a live "pending → confirmed" tag and a Solscan link.
 
 **Anti-grief and anti-cheat properties this gets you for free:**
 
-- *Move secrecy.* Commit-reveal means the operator can't peek at your move and tell your opponent (or front-run a settlement). It's verifiable client-side: the commit hash is broadcast to both players before either reveals.
+- *Move secrecy (RPS).* Commit-reveal means the operator can't peek at your move and tell your opponent (or front-run a settlement) — verifiable client-side, since the commit hash is broadcast to both players before either reveals. (Reversi is perfect-information, so it needs no secrecy; its anti-cheat is server-side move validation — every placement must be the mover's turn, in-bounds, on an empty cell, and actually outflank.)
 - *No double-spend.* Stakes are bounded by `min(lockedA, lockedB)` and locked into a session PDA at match start; the only outcomes are "loser's bps → winner" or "cancel and walk away" (on ties or operator-side failures).
 - *Sybil resistance.* `verifiedOnly` matches reject the same World ID nullifier on both sides, so one human can't farm both seats.
 - *Crash recovery.* The operator state machine is in-process, but every transition writes a SQLite row. On restart, the reconciler marks abandoned mid-flight matches `failed` so neither party is left holding an active PDA forever.
@@ -37,7 +43,7 @@ The first game is best-of-three Rock-Paper-Scissors with commit-reveal, World ID
                    ┌──────────────────────────┐
    Browser ──WSS── │  src/server/  (Fastify)  │ ──── @streamlock/operator-sdk ───▶ /v1/operator/*
    (web/, React)   │  - matches.ts  state mc  │                                          │
-                   │  - rps.ts      commit-rev│                                          ▼
+                   │  - games/      engines   │                                          ▼
                    │  - settlement  retry/log │                                  Solana mainnet
                    │  - reconciler  crash rec │                                  (entitlement ledger)
                    │  - SQLite (better-sqlite3)│
@@ -47,9 +53,9 @@ The first game is best-of-three Rock-Paper-Scissors with commit-reveal, World ID
 **Two entry points:**
 
 - `src/main.ts` (`npm run match`) — single-match demo orchestrator. Discovers two streams, runs RPS in `src/game.ts`, settles. Useful as a smoke test and as a 200-line proof of the SDK boundary.
-- `src/server/` (`npm run server` / `npm start`) — production operator: Fastify HTTP + WSS, SQLite-backed match registry, commit-reveal RPS, settlement state machine with retries, crash reconciler, World ID gate. This is what runs on Fly.
+- `src/server/` (`npm run server` / `npm start`) — production operator: Fastify HTTP + WSS, SQLite-backed match registry, the game engines (RPS + Reversi), settlement state machine with retries, crash reconciler, World ID gate. This is what runs on Fly.
 
-**Web frontend** lives in `web/` (React + Vite, Privy wallet, World ID IDKit). On Vercel it ships as a static SPA at `games.streamlock.fun`: the **games hub** at `/`, RPS at `/rps`, and match views at `/match/:id`. `/api/*` rewrites to the Fly operator (see `vercel.json`).
+**Web frontend** lives in `web/` (React + Vite, Privy wallet, World ID IDKit). On Vercel it ships as a static SPA at `games.streamlock.fun`: the **games hub** at `/`, RPS at `/rps`, Reversi at `/reversi`, and match views at `/match/:id`. `/api/*` rewrites to the Fly operator (see `vercel.json`).
 
 **Adding a game.** Games are self-contained modules around a shared shell: the backend exposes a `GameEngine` seam (`src/server/games/`) and the frontend a `games/<id>/` folder, with the hub driven by the `GAMES` array in `web/src/hub/Explore.tsx`. Full step-by-step in [`src/server/games/README.md`](src/server/games/README.md).
 
