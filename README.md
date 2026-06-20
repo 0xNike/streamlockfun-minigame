@@ -93,10 +93,20 @@ Fund it with ~0.5 SOL working balance. Per-match rent is ~0.05 SOL across two PD
 ```bash
 cp .env.example .env.local
 # fill in STREAMLOCK_OPERATOR_KEY, OPERATOR_SECRET_KEY_B64, GAME_TOKEN_MINT,
-# WORLD_* (optional, only if running verified-only matches)
+# SOLANA_RPC_URL, WORLD_* (optional, only if running verified-only matches)
 ```
 
 `STREAMLOCK_CHAIN` accepts `soldev` (devnet) or `sol` (mainnet). For the first run, point at devnet with a token mint that already has ≥2 streams.
+
+> **Broadcast RPC must be at tip.** `SOLANA_RPC_URL` is the operator's *broadcast* endpoint — the SDK's `signAndSend` signs and sends every settlement tx through it, with **no failover**. If that node falls behind the cluster tip (a stale/desynced endpoint), preflight rejects *every* tx with `Transaction simulation failed: Blockhash not found` — even a healthy finalized blockhash references slots the lagging node hasn't reached yet. Use a dedicated node (Chainstack, a fresh Helius endpoint, or your own) — **not** a flaky/free endpoint that can lose sync. To diagnose, compare slots:
+>
+> ```bash
+> # both should be within a few slots of each other
+> curl -s "$SOLANA_RPC_URL" -d '{"jsonrpc":"2.0","id":1,"method":"getSlot","params":[{"commitment":"finalized"}]}' -H content-type:application/json
+> curl -s https://api.devnet.solana.com -d '{"jsonrpc":"2.0","id":1,"method":"getSlot","params":[{"commitment":"finalized"}]}' -H content-type:application/json
+> ```
+>
+> A gap of thousands of slots means your endpoint is stale — rotate `SOLANA_RPC_URL` to a healthy node and restart the operator. (This is separate from the *build-side* RPC, which lives on the Streamlock API and is already failover-wrapped.)
 
 ### 5. Run the single-match demo
 
