@@ -22,7 +22,7 @@
     "@fastify/cors": "^8.5.0",
     "@fastify/websocket": "^10.0.1",
     "@solana/web3.js": "^1.95.0",
-    "@streamlock/operator-sdk": "file:./vendor/streamlock-operator-sdk-0.1.7.tgz",
+    "@streamlock/operator-sdk": "file:./vendor/streamlock-operator-sdk-0.1.8.tgz",
     "@worldcoin/idkit-core": "^4.1.4",
     "better-sqlite3": "^11.3.0",
     "dotenv": "^16.4.5",

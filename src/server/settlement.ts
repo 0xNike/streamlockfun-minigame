@@ -326,31 +326,21 @@ export async function cancelSession(args: {
 }
 
 /**
- * Best-effort rent reclaim. Once a session is finalized + applied (past its
- * dispute window), the operator can close the session + delta-chunk PDAs and get
- * the ~0.026 SOL/match rent refunded back to itself. The on-chain program has
- * the close instructions; this calls them via the SDK's `closeAll` convenience.
+ * Best-effort rent reclaim. After a match settles (session finalized + applied,
+ * past its dispute window), close the delta-chunk + session PDAs so the operator
+ * gets its ~0.026 SOL/match rent refunded. Uses the SDK's `closeAll` convenience
+ * (chunks → dispute record → session, in order).
  *
- * Capability-gated: the SDK only gained `closeAll` in 0.1.8. On an older SDK this
- * is a logged no-op, so a settled match NEVER depends on it. Errors are swallowed
- * (and "already closed" treated as success) — rent reclaim is housekeeping, not a
- * reason to disrupt a completed settlement; an offline sweep can retry the rest.
+ * Failure-tolerant by design: `closeAll` itself skips already-closed/absent
+ * accounts and is safe to re-invoke, and we swallow transient throws — rent
+ * reclaim is housekeeping, never a settled-match blocker. Partial failures are
+ * logged (a later sweep / the next run can retry).
  */
 export async function closeSessionForRent(sessionId: string, pda: string): Promise<void> {
-  const sessions = op.sessions as unknown as {
-    closeAll?: (
-      pda: string,
-      opts: { chunkCount: number; disputer?: string; payer?: string },
-    ) => Promise<{ closed: string[] }>;
-  };
-  if (typeof sessions.closeAll !== "function") {
-    logger.info({ sessionId, pda }, "settlement.close_skipped_no_sdk_support");
-    return;
-  }
-  // closeAll closes delta chunks [0, chunkCount) → dispute record → session.
-  // Read the authoritative count from session state (our matches are single-chunk,
-  // but don't hardcode). disputer/payer omitted: no disputes in our flow, and rent
-  // refunds to the operator (the signer/payer) by default.
+  // closeAll loops close_delta_chunk over [0, chunkCount); read the authoritative
+  // count from session state (our matches are single-chunk, but don't hardcode).
+  // disputer/payer omitted: no disputes in our flow, and rent refunds to the
+  // operator (the signer/payer) by default.
   let chunkCount = 1;
   try {
     const st = await op.sessions.get(pda);
@@ -360,16 +350,15 @@ export async function closeSessionForRent(sessionId: string, pda: string): Promi
   }
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const { closed } = await sessions.closeAll(pda, { chunkCount });
-      logger.info({ sessionId, pda, chunkCount, closed }, "settlement.rent_reclaimed");
-      return;
+      const { closed, errors } = await op.sessions.closeAll(pda, { chunkCount });
+      if (errors.length > 0) {
+        logger.warn({ sessionId, pda, chunkCount, closed, errors }, "settlement.close_partial");
+      } else {
+        logger.info({ sessionId, pda, chunkCount, closed }, "settlement.rent_reclaimed");
+      }
+      return; // closeAll is self-tolerant; a returned result (even partial) is terminal for this pass
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      // Idempotent: an already-closed/absent account means the rent is already back.
-      if (/already closed|AccountNotFound|could not find account|does not exist/i.test(msg)) {
-        logger.info({ sessionId, pda }, "settlement.close_already_done");
-        return;
-      }
       logger.warn({ sessionId, pda, attempt, msg }, "settlement.close_failed");
       if (attempt < 3) await sleep(2000 * attempt);
     }
