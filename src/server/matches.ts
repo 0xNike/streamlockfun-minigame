@@ -356,6 +356,10 @@ export class LiveMatch {
         ),
       });
       this.log.info({ finalizeSigs, applySigs }, "match.done");
+      // Best-effort rent reclaim — close the session + delta-chunk PDAs so the
+      // operator gets its ~0.026 SOL/match back. No-op until the SDK exposes
+      // closeAll (≥ 0.1.8); never blocks or fails the already-settled match.
+      void settlement.closeSessionForRent(this.id, this.pda);
     } catch (err) {
       this.fail(err instanceof Error ? err.message : String(err), "finalize_failed");
     }
