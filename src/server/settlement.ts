@@ -338,16 +338,30 @@ export async function cancelSession(args: {
  */
 export async function closeSessionForRent(sessionId: string, pda: string): Promise<void> {
   const sessions = op.sessions as unknown as {
-    closeAll?: (pda: string) => Promise<{ closed: string[] }>;
+    closeAll?: (
+      pda: string,
+      opts: { chunkCount: number; disputer?: string; payer?: string },
+    ) => Promise<{ closed: string[] }>;
   };
   if (typeof sessions.closeAll !== "function") {
     logger.info({ sessionId, pda }, "settlement.close_skipped_no_sdk_support");
     return;
   }
+  // closeAll closes delta chunks [0, chunkCount) → dispute record → session.
+  // Read the authoritative count from session state (our matches are single-chunk,
+  // but don't hardcode). disputer/payer omitted: no disputes in our flow, and rent
+  // refunds to the operator (the signer/payer) by default.
+  let chunkCount = 1;
+  try {
+    const st = await op.sessions.get(pda);
+    chunkCount = st.gameSession?.totalChunks ?? 1;
+  } catch {
+    /* fall back to single-chunk */
+  }
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const { closed } = await sessions.closeAll(pda);
-      logger.info({ sessionId, pda, closed }, "settlement.rent_reclaimed");
+      const { closed } = await sessions.closeAll(pda, { chunkCount });
+      logger.info({ sessionId, pda, chunkCount, closed }, "settlement.rent_reclaimed");
       return;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
