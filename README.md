@@ -76,7 +76,7 @@ npm install        # operator (root)
 cd web && npm install && cd ..   # web client
 ```
 
-`@streamlock/operator-sdk` is consumed via the bundled tarball at `vendor/streamlock-operator-sdk-0.1.4.tgz`. A `postinstall` script (`scripts/patch-sdk.mjs`) applies in-tree patches — no manual step required.
+`@streamlock/operator-sdk` is installed from npm (`^0.1.9`). A `postinstall` script (`scripts/patch-sdk.mjs`) appends `.js` to the SDK's extensionless ESM imports so plain Node can load it (the SDK is built with bundler module resolution) — idempotent, no manual step required.
 
 ### 2. Get an operator API key
 
