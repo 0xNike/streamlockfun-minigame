@@ -10,6 +10,11 @@ dist/
 .env.production
 .env.development
 
+# Operator signer keypairs — real-money secrets, NEVER commit
+operator.json
+mainnet-operator.json
+*-operator.json
+
 # Editor
 .vscode/
 .idea/
