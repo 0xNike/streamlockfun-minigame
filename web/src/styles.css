@@ -260,6 +260,9 @@ h3 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacin
   flex-wrap: wrap;
 }
 .picker { cursor: pointer; }
+/* The single-stream display is a read-only inset row (not an input), so give it
+   more generous, symmetric padding than the compact select. */
+.picker__single { padding: 14px 16px; }
 .picker__single code, .picker code { font-family: ui-monospace, monospace; font-size: 13px; overflow-wrap: anywhere; }
 .picker__empty { display: block; }
 
