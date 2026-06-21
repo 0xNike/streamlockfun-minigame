@@ -324,3 +324,40 @@ export async function cancelSession(args: {
   })) as { signature: string };
   return out.signature;
 }
+
+/**
+ * Best-effort rent reclaim. Once a session is finalized + applied (past its
+ * dispute window), the operator can close the session + delta-chunk PDAs and get
+ * the ~0.026 SOL/match rent refunded back to itself. The on-chain program has
+ * the close instructions; this calls them via the SDK's `closeAll` convenience.
+ *
+ * Capability-gated: the SDK only gained `closeAll` in 0.1.8. On an older SDK this
+ * is a logged no-op, so a settled match NEVER depends on it. Errors are swallowed
+ * (and "already closed" treated as success) — rent reclaim is housekeeping, not a
+ * reason to disrupt a completed settlement; an offline sweep can retry the rest.
+ */
+export async function closeSessionForRent(sessionId: string, pda: string): Promise<void> {
+  const sessions = op.sessions as unknown as {
+    closeAll?: (pda: string) => Promise<{ closed: string[] }>;
+  };
+  if (typeof sessions.closeAll !== "function") {
+    logger.info({ sessionId, pda }, "settlement.close_skipped_no_sdk_support");
+    return;
+  }
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const { closed } = await sessions.closeAll(pda);
+      logger.info({ sessionId, pda, closed }, "settlement.rent_reclaimed");
+      return;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Idempotent: an already-closed/absent account means the rent is already back.
+      if (/already closed|AccountNotFound|could not find account|does not exist/i.test(msg)) {
+        logger.info({ sessionId, pda }, "settlement.close_already_done");
+        return;
+      }
+      logger.warn({ sessionId, pda, attempt, msg }, "settlement.close_failed");
+      if (attempt < 3) await sleep(2000 * attempt);
+    }
+  }
+}
