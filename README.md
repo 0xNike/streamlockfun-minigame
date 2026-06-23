@@ -152,6 +152,12 @@ After a devnet match runs end-to-end:
 
 When `verifiedOnly: true` is passed at match-create, joiners must present a valid `wid_session` cookie matching their wallet. Provision the World ID app via the `worldcoin-developer-portal` MCP — it returns the signing key once; store it as `WORLD_SIGNING_KEY`. Set `WORLD_ENVIRONMENT=staging` for the simulator, `production` for the real World App.
 
+## Contributing
+
+Changing the code (rather than deploying it)? See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the
+dev workflow: two-package install, the `typecheck` + `build` checks CI enforces on every PR
+(`.github/workflows/ci.yml`), branch/commit conventions, and the SDK-boundary rule.
+
 ## Reference
 
 - **Operator + SDK guide:** [`docs/guides/OPERATOR_GUIDE.md`](https://github.com/0xNike/streamlockfun/blob/main/docs/guides/OPERATOR_GUIDE.md) in the streamlockfun repo (or [Gitbook](https://docs.streamlock.fun/developers/operator-guide) when synced).
