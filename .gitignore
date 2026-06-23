@@ -22,7 +22,6 @@ mainnet-operator.json
 
 # OS
 Thumbs.db
-operator.json
 
 # SQLite (operator session DB)
 *.sqlite
