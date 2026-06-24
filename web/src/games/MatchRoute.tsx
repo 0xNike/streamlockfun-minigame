@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { api } from "../shared/api";
 import { Match as RpsMatch } from "./rps/Match";
 import { Match as ReversiMatch } from "./reversi/Match";
+import { Match as ChessMatch } from "./chess/Match";
 
 /**
  * Dispatcher for `/match/:id`. Fetches the match once to read its `gameId`, then
@@ -42,6 +43,8 @@ export function MatchRoute() {
 
   return gameId === "reversi" ? (
     <ReversiMatch />
+  ) : gameId === "chess" ? (
+    <ChessMatch />
   ) : (
     <RpsMatch />
   );

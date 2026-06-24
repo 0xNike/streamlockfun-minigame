@@ -7,6 +7,7 @@
  * for crash recovery is a follow-up once a second game exists.
  */
 
+import { chessGame } from "./chess/index.js";
 import type { GameDefinition } from "./engine.js";
 import { reversiGame } from "./reversi/index.js";
 import { rpsGame } from "./rps/index.js";
@@ -16,6 +17,7 @@ export const DEFAULT_GAME_ID = "rps";
 export const GAMES: Record<string, GameDefinition> = {
   [rpsGame.id]: rpsGame,
   [reversiGame.id]: reversiGame,
+  [chessGame.id]: chessGame,
 };
 
 export function getGame(id: string): GameDefinition {

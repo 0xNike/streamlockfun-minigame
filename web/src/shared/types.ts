@@ -75,7 +75,15 @@ export type ReversiSnapshot = {
   lastMove: { x: number; y: number; by: Side } | null;
   counts: { a: number; b: number };
 };
-export type GameStateSnapshot = ReversiSnapshot;
+export type ChessSnapshot = {
+  kind: "chess";
+  /** Full position as a FEN string — the board is rebuilt from it. */
+  fen: string;
+  turn: Side;
+  lastMove: { from: string; to: string } | null;
+  check: boolean;
+};
+export type GameStateSnapshot = ReversiSnapshot | ChessSnapshot;
 
 export type MatchSnapshot = {
   matchId: string;
@@ -130,6 +138,18 @@ export type ServerFrame =
   | { type: "rv_move"; ts: number; by: Side; x: number; y: number; flipped: { x: number; y: number }[] }
   | { type: "rv_turn"; ts: number; turn: Side; deadline: number; autoPassed?: Side }
   | {
+      type: "ch_move";
+      ts: number;
+      by: Side;
+      from: string;
+      to: string;
+      san: string;
+      fen: string;
+      check: boolean;
+      promotion?: "q" | "r" | "b" | "n";
+    }
+  | { type: "ch_turn"; ts: number; turn: Side; deadline: number; check: boolean }
+  | {
       type: "tx";
       ts: number;
       kind: TxKind;
@@ -160,6 +180,7 @@ export type ClientFrame =
   | { type: "reveal"; round: number; move: Move; nonce: string }
   | { type: "forfeit_round"; round: number }
   | { type: "place"; x: number; y: number }
+  | { type: "chess_move"; from: string; to: string; promotion?: "q" | "r" | "b" | "n" }
   | { type: "request_resync" }
   | { type: "pong" }
   | { type: "leave" }
