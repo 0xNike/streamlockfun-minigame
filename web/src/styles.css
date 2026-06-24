@@ -290,7 +290,7 @@ input:focus, select:focus {
    specificity for every other (game-page) button. Otherwise this hover rule
    (specificity 0,2,1) outranks Tailwind's `hover:bg-*` utilities (0,2,0) and the
    hub's (?) help button flashes a light cream background on hover. */
-button:where(:not(.games-hub *):not(.header__link):not(.header__burger):not(.reversi-cell)) {
+button:where(:not(.games-hub *):not(.header__link):not(.header__burger):not(.reversi-cell):not(.chess-cell)) {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -302,9 +302,9 @@ button:where(:not(.games-hub *):not(.header__link):not(.header__burger):not(.rev
   transition: background .15s, border-color .15s, transform .05s, box-shadow .15s;
   box-shadow: var(--shadow-sm);
 }
-button:where(:not(.games-hub *):not(.header__link):not(.header__burger):not(.reversi-cell)):hover:not(:disabled) { background: var(--panel2); border-color: #52525b; }
-button:where(:not(.games-hub *):not(.header__link):not(.header__burger):not(.reversi-cell)):active:not(:disabled) { transform: translateY(1px); }
-button:where(:not(.games-hub *):not(.header__link):not(.header__burger):not(.reversi-cell)):disabled { opacity: 0.5; cursor: not-allowed; }
+button:where(:not(.games-hub *):not(.header__link):not(.header__burger):not(.reversi-cell):not(.chess-cell)):hover:not(:disabled) { background: var(--panel2); border-color: #52525b; }
+button:where(:not(.games-hub *):not(.header__link):not(.header__burger):not(.reversi-cell):not(.chess-cell)):active:not(:disabled) { transform: translateY(1px); }
+button:where(:not(.games-hub *):not(.header__link):not(.header__burger):not(.reversi-cell):not(.chess-cell)):disabled { opacity: 0.5; cursor: not-allowed; }
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
@@ -1029,3 +1029,102 @@ button.link:hover:not(:disabled) {
   .reversi-board { gap: 1px; padding: 4px; }
   .reversi-cell { border-radius: 2px; }
 }
+
+/* ── Chess board ───────────────────────────────────────────────────────── */
+.chess-play { display: flex; flex-direction: column; gap: 12px; }
+.chess-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--font-display);
+  font-weight: 600;
+}
+.chess-turn { font-size: 15px; }
+.chess-turn--you { color: var(--accent); }
+.chess-turn--opp { color: var(--dim); }
+.chess-check {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--amber);
+  border: 1px solid var(--amber);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.chess-hint { margin: 0; }
+
+.chess-wrap { position: relative; width: 100%; max-width: 560px; margin: 0 auto; }
+.chess-board {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.chess-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  aspect-ratio: 1 / 1;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  cursor: default;
+}
+.chess-cell--light { background: #c7ccd1; }
+.chess-cell--dark { background: #5b6168; }
+.chess-cell:not(:disabled) { cursor: pointer; }
+.chess-cell--sel { box-shadow: inset 0 0 0 3px var(--accent); }
+.chess-cell--last { box-shadow: inset 0 0 0 3px var(--accent2); }
+.chess-cell--check { box-shadow: inset 0 0 0 3px var(--red); }
+.chess-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.chess-piece { width: 86%; height: 86%; display: block; pointer-events: none; }
+
+/* Move hints: a dot on empty targets, a ring on captures. */
+.chess-target-dot {
+  position: absolute;
+  width: 26%;
+  height: 26%;
+  border-radius: 50%;
+  background: rgba(249, 115, 22, 0.55);
+  pointer-events: none;
+}
+.chess-target-capture {
+  position: absolute;
+  inset: 6%;
+  border-radius: 50%;
+  border: 4px solid rgba(249, 115, 22, 0.55);
+  pointer-events: none;
+}
+
+/* Promotion picker, centered over the board. */
+.chess-promo {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  background: rgba(11, 11, 13, 0.82);
+  border-radius: 10px;
+  padding: 12px;
+}
+.chess-promo__btn {
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px;
+}
+.chess-promo__btn:hover:not(:disabled) { border-color: var(--accent); }

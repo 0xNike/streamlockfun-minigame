@@ -26,6 +26,9 @@ const Schema = z.object({
   // Reversi per-move deadline: a player who doesn't place a disc in time
   // forfeits the match to their opponent.
   REVERSI_MOVE_DEADLINE_SEC: z.coerce.number().int().positive().default(30),
+  // Chess per-move deadline: miss it and you forfeit. Higher than the board
+  // games above — chess moves need more thinking time. (Per-move, not a clock.)
+  CHESS_MOVE_DEADLINE_SEC: z.coerce.number().int().positive().default(60),
   RECONNECT_GRACE_SEC: z.coerce.number().int().nonnegative().default(30),
   STAKE_BPS: z.coerce.number().int().positive().max(10000).default(1000),
   // Cohort tolerance band for amount-based betting. A pairing is rejected when

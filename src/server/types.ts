@@ -168,7 +168,19 @@ export type ReversiSnapshot = {
   counts: { a: number; b: number };
 };
 
-export type GameStateSnapshot = ReversiSnapshot;
+export type ChessSnapshot = {
+  kind: "chess";
+  /** Full position as a FEN string — clients rebuild the board from it. */
+  fen: string;
+  /** Whose move it is now ("a" = White, "b" = Black). */
+  turn: Side;
+  /** Most recent move's from/to squares (algebraic, e.g. "e2"→"e4"); null before the first move. */
+  lastMove: { from: string; to: string } | null;
+  /** True when the side-to-move is in check (for the UI king highlight). */
+  check: boolean;
+};
+
+export type GameStateSnapshot = ReversiSnapshot | ChessSnapshot;
 
 export type MatchSnapshot = {
   matchId: string;
@@ -234,6 +246,21 @@ export type ServerFrame =
   // Whose turn now + the move deadline. `autoPassed` names a side skipped for
   // having no legal move (so the UI can say "opponent had no move").
   | { type: "rv_turn"; ts: number; turn: Side; deadline: number; autoPassed?: Side }
+  // ── Chess ──
+  // A move was applied; clients load `fen` to sync. `san` feeds the move list, `check` the UI.
+  | {
+      type: "ch_move";
+      ts: number;
+      by: Side;
+      from: string;
+      to: string;
+      san: string;
+      fen: string;
+      check: boolean;
+      promotion?: "q" | "r" | "b" | "n";
+    }
+  // Whose turn now + the move deadline; `check` if that side is in check.
+  | { type: "ch_turn"; ts: number; turn: Side; deadline: number; check: boolean }
   | {
       type: "tx";
       ts: number;
@@ -291,6 +318,14 @@ export const ClientFrame = z.discriminatedUnion("type", [
     type: z.literal("place"),
     x: z.number().int().min(0).max(63),
     y: z.number().int().min(0).max(63),
+  }),
+  // Chess: a move between algebraic squares (e.g. "e2"→"e4"), optional promotion.
+  // Legality is enforced server-side by chess.js.
+  z.object({
+    type: z.literal("chess_move"),
+    from: z.string().regex(/^[a-h][1-8]$/),
+    to: z.string().regex(/^[a-h][1-8]$/),
+    promotion: z.enum(["q", "r", "b", "n"]).optional(),
   }),
   z.object({ type: z.literal("request_resync") }),
   z.object({ type: z.literal("pong") }),

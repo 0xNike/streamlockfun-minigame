@@ -44,6 +44,18 @@ const GAMES: Game[] = [
     status: "live",
     verified: true,
   },
+  {
+    slug: "chess",
+    name: "Chess",
+    tagline: "Checkmate to take the stake",
+    description:
+      "Standard chess, head to head. Deliver checkmate (or outlast your opponent) to grow your share of the unlock payout; a draw cancels the match and refunds both sides.",
+    operator: "Streamlock Labs",
+    href: "/chess",
+    tags: ["1v1", "Strategy"],
+    status: "live",
+    verified: true,
+  },
 ];
 
 // Only surface games people can actually play right now.
