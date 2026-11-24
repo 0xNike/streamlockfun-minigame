@@ -132,6 +132,8 @@ export function resumeSettlement(row: SessionRow): boolean {
           deltas,
           broadcast: () => {}, // no live sockets after a restart
         });
+        // apply only touches the loser's stream; free the winner's own reservation.
+        await releaseRowStakes(row);
         setSessionState(row.id, "done");
         log.info(out, "reconciler.resume_settlement_done");
       } catch (err) {

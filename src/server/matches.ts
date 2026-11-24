@@ -411,22 +411,27 @@ export class LiveMatch {
 
   /** Operator release of both players' reservations for this session. */
   private async releaseBoth(): Promise<void> {
-    if (!this.pda) return;
     for (const slot of [this.playerA, this.playerB]) {
-      if (!slot) continue;
-      try {
-        const sig = await releaseStake({ sessionPda: this.pda, holder: slot.wallet, streamId: slot.streamId });
-        if (sig) {
-          logTx({ sessionId: this.id, kind: "release", signature: sig, attempt: 1, durationMs: 0 });
-          this.broadcast({ type: "tx", ts: nowSec(), kind: "release", attempt: 1, status: "confirmed", sig });
-        }
-      } catch (err) {
-        // Don't fail the match over a release: the reservation also lapses at
-        // reserved_until and the holder can self-release a Cancelled session.
-        this.log.error({ wallet: slot.wallet, err: err instanceof Error ? err.message : String(err) }, "release.failed");
-      }
+      if (slot) await this.releaseSide(slot);
     }
   }
+
+  /** Operator release of one player's reservation for this session (best effort). */
+  private async releaseSide(slot: PlayerSlot): Promise<void> {
+    if (!this.pda) return;
+    try {
+      const sig = await releaseStake({ sessionPda: this.pda, holder: slot.wallet, streamId: slot.streamId });
+      if (sig) {
+        logTx({ sessionId: this.id, kind: "release", signature: sig, attempt: 1, durationMs: 0 });
+        this.broadcast({ type: "tx", ts: nowSec(), kind: "release", attempt: 1, status: "confirmed", sig });
+      }
+    } catch (err) {
+      // Don't fail the match over a release: the reservation also lapses at
+      // reserved_until and the holder can self-release a Cancelled session.
+      this.log.error({ wallet: slot.wallet, err: err instanceof Error ? err.message : String(err) }, "release.failed");
+    }
+  }
+
 
   // ───────── disputes ─────────
 
@@ -593,8 +598,11 @@ export class LiveMatch {
           (s) => `https://solscan.io/tx/${s.sig}?cluster=${cluster}`,
         ),
       });
-      // A single-chunk apply releases every passed player's reservation
-      // on-chain (winner included), so there is nothing left to release here.
+      // apply runs on the LOSER's stream only, which clears the loser's
+      // reservation there. The winner reserved on THEIR OWN stream, which
+      // isn't in the delta chunk, so release it explicitly (the dispute
+      // window is over, so the operator may release).
+      await this.releaseSide(this.winner === "a" ? this.playerA : this.playerB!);
       this.log.info({ finalizeSigs, applySigs }, "match.done");
       // Rent reclaim is NOT attempted here: the router keeps session evidence
       // for 7 days after the dispute window (EvidenceRetention). The periodic
