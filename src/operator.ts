@@ -28,3 +28,11 @@ export const op = new StreamlockOperator({
 
 export const GAME_TOKEN_MINT = required("GAME_TOKEN_MINT");
 export const OPERATOR_PUBKEY = OPERATOR_KEYPAIR.publicKey.toBase58();
+
+/** Operator co-signature for txs the games server builds directly
+ *  (reserve_stake / release_stake). Never exposes the secret key. */
+export function operatorSign<T extends { partialSign(...signers: Keypair[]): void }>(tx: T): T {
+  tx.partialSign(OPERATOR_KEYPAIR);
+  return tx;
+}
+export const OPERATOR_PUBLIC_KEY = OPERATOR_KEYPAIR.publicKey;

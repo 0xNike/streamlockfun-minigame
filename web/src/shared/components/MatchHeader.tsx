@@ -4,10 +4,12 @@ import type { MatchSnapshot, Side } from "../types";
 const STATE_LABEL: Record<string, string> = {
   partnered: "waiting for opponent",
   creating: "creating session…",
+  reserving: "locking stakes…",
   active: "match in progress",
   complete: "match decided",
   submitting: "submitting deltas…",
   dispute_wait: "dispute window…",
+  under_review: "under review",
   finalizing: "finalizing…",
   applying: "applying deltas…",
   done: "✅ done",

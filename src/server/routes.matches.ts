@@ -25,10 +25,28 @@ import {
 } from "./wager.js";
 import { SESSION_COOKIE, isWorldIdConfigured, isWalletVerified, verifySession } from "./worldid.js";
 import { findBusyStreamSession } from "./db.js";
+import { authedWallet } from "./auth.js";
+
+/** create/join must come from the wallet that signed in (Bearer token). */
+function authReject(req: Parameters<typeof authedWallet>[0], wallet: string): GuardReject | null {
+  const signedIn = authedWallet(req);
+  if (!signedIn) {
+    return { status: 401, code: "AUTH_REQUIRED", message: "Sign in with your wallet first." };
+  }
+  if (signedIn !== wallet) {
+    return { status: 403, code: "WALLET_MISMATCH", message: "You're signed in with a different wallet than this request uses." };
+  }
+  return null;
+}
 import {
   effectiveDisputeWindowSec,
+  hasActiveReservation,
   holderBps,
+  maxLossBps,
+  minEntryViolation,
   readRouterConfig,
+  readRouterParams,
+  readStakeViews,
   readStreamStates,
   stakeGuard,
 } from "./routerChain.js";
@@ -57,15 +75,22 @@ async function chainGuard(args: {
   tokenMint: string;
   a: { wallet: string; streamId: string };
   b: { wallet: string; streamId: string } | null;
-}): Promise<{ ok: true; bpsA: number; bpsB: number | null } | ({ ok: false } & GuardReject)> {
+}): Promise<{ ok: true; sizing: PairSizing } | ({ ok: false } & GuardReject)> {
   let states;
   let maxEntries;
+  let params;
+  let views;
   try {
     const ids = args.b ? [args.a.streamId, args.b.streamId] : [args.a.streamId];
-    [states, { maxEntitlementEntriesPerChunk: maxEntries }] = await Promise.all([
+    [states, { maxEntitlementEntriesPerChunk: maxEntries }, params] = await Promise.all([
       readStreamStates(ids),
       readRouterConfig(),
+      readRouterParams(),
     ]);
+    const who = args.b ? [args.a, args.b] : [args.a];
+    views = await readStakeViews(
+      who.map((w, i) => ({ streamId: w.streamId, holder: w.wallet, bps: holderBps(states![i], w.wallet) })),
+    );
   } catch (err) {
     logger.warn({ err: err instanceof Error ? err.message : String(err) }, "chain_guard.read_failed");
     return {
@@ -76,8 +101,8 @@ async function chainGuard(args: {
     };
   }
   const sides = [
-    { who: args.a, opp: args.b?.wallet ?? null, state: states[0] },
-    ...(args.b ? [{ who: args.b, opp: args.a.wallet, state: states[1] }] : []),
+    { who: args.a, opp: args.b?.wallet ?? null, state: states[0], view: views[0] },
+    ...(args.b ? [{ who: args.b, opp: args.a.wallet, state: states[1], view: views[1] }] : []),
   ];
   for (const s of sides) {
     const bad = stakeGuard({
@@ -88,12 +113,59 @@ async function chainGuard(args: {
       maxEntries,
     });
     if (bad) return { ok: false, status: 422, code: bad.code, message: bad.message };
+    // A reservation still bound to any session (another game, a lottery
+    // ticket) blocks reserve_stake on-chain (StakeAlreadyReserved).
+    if (hasActiveReservation(s.view)) {
+      return {
+        ok: false,
+        status: 409,
+        code: "STREAM_RESERVED",
+        message: "Part of this stream is still locked by another match. Wait for it to finish, or pick a different stream.",
+      };
+    }
+    if (maxLossBps(s.view) <= 0) {
+      return {
+        ok: false,
+        status: 422,
+        code: "STREAM_NOTHING_UNSOLD",
+        message: "You've already sold your share of this stream, so there's nothing left to stake.",
+      };
+    }
   }
   return {
     ok: true,
-    bpsA: holderBps(states[0], args.a.wallet),
-    bpsB: args.b ? holderBps(states[1], args.b.wallet) : null,
+    sizing: {
+      maxLossA: maxLossBps(views[0]),
+      maxLossB: args.b ? maxLossBps(views[1]) : 0,
+      bpsA: views[0].bps,
+      bpsB: args.b ? views[1].bps : 0,
+      // Winner's existing entry in the LOSER's stream (min-entry check).
+      bInStreamA: args.b ? holderBps(states[0], args.b.wallet) : 0,
+      aInStreamB: args.b ? holderBps(states[1], args.a.wallet) : 0,
+      minEntryBps: params.minEntryBps,
+    },
   };
+}
+
+interface PairSizing {
+  /** Max bps each side can lose in its own stream (unsold predicate). */
+  maxLossA: number;
+  maxLossB: number;
+  /** Each side's current bps in its own stream. */
+  bpsA: number;
+  bpsB: number;
+  bInStreamA: number;
+  aInStreamB: number;
+  minEntryBps: number;
+}
+
+/** Both outcomes must leave every changed entry at 0 or ≥ min_entry_bps. */
+function minEntryReject(sz: PairSizing, lossIfALoses: number, lossIfBLoses: number): GuardReject | null {
+  const v =
+    minEntryViolation({ loserBps: sz.bpsA, winnerExistingBps: sz.bInStreamA, loss: lossIfALoses, minEntryBps: sz.minEntryBps }) ??
+    minEntryViolation({ loserBps: sz.bpsB, winnerExistingBps: sz.aInStreamB, loss: lossIfBLoses, minEntryBps: sz.minEntryBps });
+  if (!v) return null;
+  return { status: 422, code: "STAKE_BELOW_MIN_ENTRY", message: `This stake doesn't fit the on-chain share rules: ${v}.` };
 }
 
 function wsUrl(matchId: string, side: "a" | "b"): string {
@@ -169,6 +241,10 @@ export function registerMatchRoutes(app: FastifyInstance): void {
       });
     }
     const body = parsed.data;
+    const authA = authReject(req, body.wallet);
+    if (authA) {
+      return reply.code(authA.status).send({ error: { code: authA.code, message: authA.message, fatal: true } });
+    }
     const ownsA = await assertOwnsStream(body.wallet, body.streamId);
     if (!ownsA.ok) {
       return reply.code(422).send({
@@ -258,6 +334,10 @@ export function registerMatchRoutes(app: FastifyInstance): void {
         error: { code: "MATCH_FULL", message: "match already has B", fatal: true },
       });
     }
+    const authB = authReject(req, parsed.data.wallet);
+    if (authB) {
+      return reply.code(authB.status).send({ error: { code: authB.code, message: authB.message, fatal: true } });
+    }
     const ownsB = await assertOwnsStream(parsed.data.wallet, parsed.data.streamId);
     if (!ownsB.ok) {
       return reply.code(422).send({
@@ -323,9 +403,10 @@ export function registerMatchRoutes(app: FastifyInstance): void {
       return reply.code(guard.status).send({ error: { code: guard.code, message: guard.message, fatal: true } });
     }
 
+    const sz = guard.sizing;
     const wagerOrErr = await tryMaterialiseWager(match, joiner.streamId, {
-      a: guard.bpsA,
-      b: guard.bpsB!,
+      a: sz.maxLossA,
+      b: sz.maxLossB,
     });
     if (wagerOrErr.kind === "reject") {
       return reply.code(422).send({
@@ -334,7 +415,7 @@ export function registerMatchRoutes(app: FastifyInstance): void {
     }
     // Legacy symmetric path (no locked sizes): the loss is bpsAtStake of the
     // loser's stream, so each side must hold at least that much.
-    if (!wagerOrErr.wager && Math.min(guard.bpsA, guard.bpsB!) < match.bpsAtStake) {
+    if (!wagerOrErr.wager && Math.min(sz.maxLossA, sz.maxLossB) < match.bpsAtStake) {
       return reply.code(422).send({
         error: {
           code: "STAKE_EXCEEDS_SHARE",
@@ -342,6 +423,13 @@ export function registerMatchRoutes(app: FastifyInstance): void {
           fatal: true,
         },
       });
+    }
+
+    const lossIfALoses = wagerOrErr.wager?.bpsIfALoses ?? match.bpsAtStake;
+    const lossIfBLoses = wagerOrErr.wager?.bpsIfBLoses ?? match.bpsAtStake;
+    const minBad = minEntryReject(sz, lossIfALoses, lossIfBLoses);
+    if (minBad) {
+      return reply.code(minBad.status).send({ error: { code: minBad.code, message: minBad.message, fatal: true } });
     }
 
     // Busy check runs LAST, with no await between it and joinAsB (which
@@ -483,7 +571,8 @@ export function registerMatchRoutes(app: FastifyInstance): void {
 async function tryMaterialiseWager(
   match: LiveMatch,
   joinerStreamId: string,
-  /** Each side's on-chain bps in its OWN stream (chunk-0 entry). */
+  /** Max bps each side may lose in its OWN stream: the router's unsold
+   *  predicate (maxLossBps), not just the chunk-0 entry. */
   heldBps: { a: number; b: number },
 ): Promise<
   | { kind: "ok"; wager: WagerSnapshot | null }
@@ -526,9 +615,10 @@ async function tryMaterialiseWager(
     return { kind: "ok", wager: null };
   }
 
-  // Size against what each player actually HOLDS, not the whole stream.
-  // lockedTokenAmount is the stream's total; a holder with h bps of it can
-  // lose at most locked × h / 10000. Sizing against the full locked amount
+  // Size against what each player can actually LOSE: their unsold share
+  // (Option B: 1 bps = 1/10000 of the position; a holder who sold part of
+  // their share can only stake the rest). lockedTokenAmount is the stream's
+  // total, so h bps of it is locked × h / 10000. Sizing against the full locked amount
   // let a 10% holder be matched for more bps than they own, which the chain
   // rejects at apply time (DeltaUnderflow) after the match was played.
   const heldA = (BigInt(lockedA) * BigInt(heldBps.a)) / 10000n;

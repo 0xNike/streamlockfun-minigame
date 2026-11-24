@@ -57,6 +57,18 @@ const Schema = z.object({
   // retries after a slow confirmation don't reuse a stale, now-past timestamp.
   ENDTS_BUFFER_SEC: z.coerce.number().int().positive().default(30),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+  // Who funds a player's HolderSale PDA (~0.0018 SOL, created at their first
+  // reserve_stake on a stream, refunded to the payer after the position
+  // settles). "operator" lets players with 0 SOL (Privy email/Google
+  // embedded wallets) play; "player" makes them pay their own.
+  RESERVE_RENT_PAYER: z.enum(["operator", "player"]).default("operator"),
+  // Seconds both players have to co-sign their stake reservation after the
+  // on-chain session is created. Miss it → the match is cancelled and any
+  // reservation that did land is released.
+  RESERVE_DEADLINE_SEC: z.coerce.number().int().positive().default(90),
+  // HMAC secret for wallet sign-in tokens. REQUIRED in production; dev falls
+  // back to a random per-process secret (tokens die on restart).
+  AUTH_SESSION_SECRET: z.string().min(32).optional(),
   // Drives the Streamlock app explorer link (app.streamlock.fun/<TOKEN_ENV>/<mint>).
   // "soldev" → devnet, "sol" → mainnet. Mirrors STREAMLOCK_CHAIN.
   TOKEN_ENV: z.enum(["sol", "soldev"]).default("soldev"),

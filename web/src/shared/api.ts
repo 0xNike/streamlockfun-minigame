@@ -5,6 +5,8 @@
  * VITE_API_BASE for the deployed frontend → tunneled-operator setup.
  */
 
+import { tokenFor } from "./authStore";
+
 const BASE = import.meta.env.VITE_API_BASE ?? "";
 
 async function asJson<T>(res: Response): Promise<T> {
@@ -70,7 +72,30 @@ export type WorldIdContext = {
   signature: string;
 };
 
+function authHeaders(wallet: string): Record<string, string> {
+  const t = tokenFor(wallet);
+  return t ? { authorization: `Bearer ${t}` } : {};
+}
+
 export const api = {
+  auth: {
+    async nonce(wallet: string): Promise<{ message: string; expiresAt: number }> {
+      const res = await fetch(`${BASE}/api/auth/nonce`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ wallet }),
+      });
+      return asJson(res);
+    },
+    async verify(wallet: string, message: string, signatureB64: string): Promise<{ token: string; wallet: string; exp: number }> {
+      const res = await fetch(`${BASE}/api/auth/verify`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ wallet, message, signature: signatureB64 }),
+      });
+      return asJson(res);
+    },
+  },
   async getConfig(): Promise<ServerConfig> {
     const res = await fetch(`${BASE}/api/config`);
     return asJson<ServerConfig>(res);
@@ -100,7 +125,7 @@ export const api = {
   }): Promise<CreateMatchResponse> {
     const res = await fetch(`${BASE}/api/matches`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...authHeaders(args.wallet) },
       body: JSON.stringify(args),
       credentials: "include",
     });
@@ -109,7 +134,7 @@ export const api = {
   async joinMatch(matchId: string, wallet: string, streamId: string): Promise<JoinMatchResponse> {
     const res = await fetch(`${BASE}/api/matches/${encodeURIComponent(matchId)}/join`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...authHeaders(wallet) },
       body: JSON.stringify({ wallet, streamId }),
       credentials: "include",
     });

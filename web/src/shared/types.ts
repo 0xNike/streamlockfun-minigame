@@ -5,16 +5,28 @@
 
 export type Side = "a" | "b";
 export type Move = "rock" | "paper" | "scissors";
-export type TxKind = "create" | "submit" | "finalize" | "apply" | "cancel";
+export type TxKind =
+  | "create"
+  | "reserve"
+  | "submit"
+  | "finalize"
+  | "apply"
+  | "cancel"
+  | "release"
+  | "dispute";
+
+export type SignPurpose = "reserve" | "dispute";
 
 export type MatchState =
   | "queued"
   | "partnered"
   | "creating"
+  | "reserving"
   | "active"
   | "complete"
   | "submitting"
   | "dispute_wait"
+  | "under_review"
   | "finalizing"
   | "applying"
   | "done"
@@ -166,9 +178,19 @@ export type ServerFrame =
       explorerLinks: string[];
     }
   | {
+      type: "sign_request";
+      ts: number;
+      purpose: SignPurpose;
+      /** base64 legacy tx, already partially signed by the operator. */
+      tx: string;
+      bps?: number;
+      deadline: number;
+    }
+  | { type: "stake_status"; ts: number; side: Side; status: "requested" | "confirmed" | "failed"; sig?: string }
+  | {
       type: "cancelled";
       ts: number;
-      reason: "tie" | "abandon" | "stream_busy" | "operator_decision";
+      reason: "tie" | "abandon" | "stream_busy" | "operator_decision" | "stake_not_signed" | "dispute_upheld";
       refundSig?: string;
     }
   | { type: "failed"; ts: number; reason: string; contact: string }
@@ -185,4 +207,6 @@ export type ClientFrame =
   | { type: "pong" }
   | { type: "leave" }
   /** Voluntary whole-match resign — opponent wins, normal settlement runs. */
-  | { type: "forfeit" };
+  | { type: "forfeit" }
+  | { type: "signed_tx"; purpose: SignPurpose; tx: string }
+  | { type: "request_dispute"; reasonCode: number };

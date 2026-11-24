@@ -3,6 +3,8 @@ import { useParams } from "react-router-dom";
 import { useWalletAddress } from "../../shared/useWalletAddress";
 import { api, type ServerConfig } from "../../shared/api";
 import { openWs, type WsClient } from "../../shared/ws";
+import { useWalletAuth } from "../../shared/useWalletAuth";
+import { StakeSignPrompt } from "../../shared/components/StakeSignPrompt";
 import type {
   ChessSnapshot,
   MatchSnapshot,
@@ -41,6 +43,7 @@ type Role =
 export function Match() {
   const { id: matchId } = useParams<{ id: string }>();
   const { address: wallet } = useWalletAddress();
+  const { ensureSignedIn } = useWalletAuth();
 
   const [role, setRole] = useState<Role>({ kind: "loading" });
   const [snap, setSnap] = useState<MatchSnapshot | null>(null);
@@ -135,6 +138,7 @@ export function Match() {
     setJoining(true);
     setJoinErr(null);
     try {
+      await ensureSignedIn();
       await api.joinMatch(matchId, wallet, joinerStream.streamId);
       const refreshed = await api.getMatch(matchId);
       setSnap(refreshed);
@@ -150,9 +154,22 @@ export function Match() {
     if (!matchId || role.kind !== "playing" || !cfg?.wsBase) return;
     const you = role.you;
     const url = `${cfg.wsBase.replace(/\/$/, "")}/ws/match/${matchId}?as=${you}`;
-    const ws = openWs(url, (frame) => handleFrame(frame));
-    wsRef.current = ws;
-    return () => ws.close();
+    // The server binds the socket to the signed-in wallet, so sign in first
+    // (no-op when this tab already holds a valid token).
+    let opened: WsClient | null = null;
+    let stopped = false;
+    void ensureSignedIn()
+      .then(() => {
+        if (stopped) return;
+      const ws = openWs(url, (frame) => handleFrame(frame));
+      wsRef.current = ws;
+      opened = ws;
+      })
+      .catch((e) => setJoinErr(e instanceof Error ? e.message : String(e)));
+    return () => {
+      stopped = true;
+      opened?.close();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchId, role.kind === "playing" ? role.you : null, cfg?.wsBase]);
 
@@ -382,9 +399,15 @@ export function Match() {
         />
       )}
 
-      {(snap.state === "partnered" || snap.state === "creating") && (
+      <StakeSignPrompt />
+
+      {(snap.state === "partnered" || snap.state === "creating" || snap.state === "reserving") && (
         <div className="card">
-          <h2>{snap.state === "partnered" ? "Waiting for opponent…" : "Creating session on-chain…"}</h2>
+          <h2>{snap.state === "partnered"
+              ? "Waiting for opponent…"
+              : snap.state === "reserving"
+                ? "Waiting for both players to lock their stakes…"
+                : "Creating session on-chain…"}</h2>
           <p className="dim small">
             Share this URL with your friend to have them join:
             <br />
@@ -430,6 +453,7 @@ export function Match() {
       {snap.state !== "active" &&
         snap.state !== "partnered" &&
         snap.state !== "creating" &&
+        snap.state !== "reserving" &&
         snap.state !== "done" && (
           <SettlementProgress snap={snap} you={you} txEvents={txEvents} cluster={cfg?.explorerCluster ?? "mainnet"} />
         )}

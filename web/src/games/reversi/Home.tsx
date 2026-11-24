@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useWalletAuth } from "../../shared/useWalletAuth";
 import { useNavigate } from "react-router-dom";
 import { useWalletAddress } from "../../shared/useWalletAddress";
 import { api, type ServerConfig } from "../../shared/api";
@@ -15,6 +16,7 @@ interface PickedStream {
 
 export function Home() {
   const { address: wallet } = useWalletAddress();
+  const { ensureSignedIn } = useWalletAuth();
   const navigate = useNavigate();
   const [code, setCode] = useState("");
   const [picked, setPicked] = useState<PickedStream | null>(null);
@@ -57,6 +59,7 @@ export function Home() {
     setBusy(true);
     setErr(null);
     try {
+      await ensureSignedIn();
       const { matchId } = await api.createMatch({
         wallet,
         streamId: picked.streamId,

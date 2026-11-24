@@ -9,11 +9,13 @@
  */
 
 import { usePrivy } from "@privy-io/react-auth";
-import { useWallets } from "@privy-io/react-auth/solana";
+import { useWallets, type ConnectedStandardSolanaWallet } from "@privy-io/react-auth/solana";
 
 export interface WalletAddress {
   /** Base58 Solana address of the active wallet, or null when not connected. */
   address: string | null;
+  /** The active Privy wallet object (needed to sign), or null. */
+  wallet: ConnectedStandardSolanaWallet | null;
   /** True once Privy is ready, the user is authenticated, and we have an address. */
   connected: boolean;
   /** Privy SDK has finished initializing. Gate UI on this to avoid flicker. */
@@ -34,6 +36,7 @@ export function useWalletAddress(): WalletAddress {
 
   return {
     address,
+    wallet: active,
     connected: authenticated && address !== null,
     ready,
     login: () => login(),

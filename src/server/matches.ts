@@ -27,6 +27,7 @@ import {
   setWagerSnapshot,
   setFailed,
   signaturesForSession,
+  logTx,
 } from "./db.js";
 import { logger } from "./log.js";
 import * as lobby from "./lobby.js";
@@ -44,6 +45,26 @@ import {
   TERMINAL_STATES,
 } from "./types.js";
 import { loserBpsFromSnapshot, type WagerSnapshot } from "./wager.js";
+import type { Transaction } from "@solana/web3.js";
+import {
+  acceptPlayerSigned,
+  buildOpenDisputeTx,
+  buildReserveStakeTx,
+  releaseStake,
+  sendAndConfirm,
+  txToB64,
+} from "./stakeTx.js";
+import { readSession } from "./routerChain.js";
+
+/** How often a match under review re-reads the session for the arbiter's decision. */
+const REVIEW_POLL_MS = 5 * 60_000;
+
+interface StakeReservation {
+  bps: number;
+  status: "pending" | "confirmed" | "failed";
+  tx: Transaction | null;
+  sig?: string;
+}
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 
@@ -94,6 +115,13 @@ export class LiveMatch {
    *  via the GameHost built in the constructor. */
   private readonly engine: GameEngine;
   private destroyed = false;
+
+  /** reserve_stake per side while `reserving` (holder co-signs = consent). */
+  private reservations: Partial<Record<Side, StakeReservation>> = {};
+  private reserveDeadline = 0;
+  private reserveTimer: NodeJS.Timeout | null = null;
+  /** open_dispute tx awaiting the disputer's signature. */
+  private pendingDispute: Partial<Record<Side, Transaction>> = {};
 
   constructor(
     public readonly id: string,
@@ -253,10 +281,223 @@ export class LiveMatch {
           // lobby mid-game (the create-time TTL is sized for unfilled offers).
           expiresAt: nowSec() + 3600,
         });
-      this.transition("active", "session_created");
-      this.engine.start();
+      await this.beginReserving();
     } catch (err) {
       this.fail(err instanceof Error ? err.message : String(err), "create_failed");
+    }
+  }
+
+  // ───────── stake reservation (holder co-signs reserve_stake) ─────────
+
+  /** bps this side loses if it loses, i.e. exactly what it must reserve. */
+  private stakeFor(side: Side): number {
+    if (this.wager) return side === "a" ? this.wager.bpsIfALoses : this.wager.bpsIfBLoses;
+    return this.bpsAtStake;
+  }
+
+  private async beginReserving(): Promise<void> {
+    this.transition("reserving", "session_created");
+    this.reserveDeadline = nowSec() + config.RESERVE_DEADLINE_SEC;
+    this.reservations = {
+      a: { bps: this.stakeFor("a"), status: "pending", tx: null },
+      b: { bps: this.stakeFor("b"), status: "pending", tx: null },
+    };
+    this.reserveTimer = setTimeout(() => {
+      if (this.state !== "reserving") return;
+      void this.cancelAndRelease("stake_not_signed", "reserve_deadline");
+    }, config.RESERVE_DEADLINE_SEC * 1000);
+    await Promise.all([this.requestReserve("a"), this.requestReserve("b")]);
+  }
+
+  /** (Re)build the reserve tx with a fresh blockhash and ask the player to sign it. */
+  private async requestReserve(side: Side): Promise<void> {
+    const res = this.reservations[side];
+    if (this.state !== "reserving" || !res || res.status !== "pending" || !this.pda) return;
+    const slot = this.slot(side);
+    try {
+      res.tx = await buildReserveStakeTx({
+        sessionPda: this.pda,
+        holder: slot.wallet,
+        streamId: slot.streamId,
+        bps: res.bps,
+      });
+    } catch (err) {
+      this.log.error({ side, err: err instanceof Error ? err.message : String(err) }, "reserve.build_failed");
+      void this.cancelAndRelease("operator_decision", "reserve_build_failed");
+      return;
+    }
+    this.sendTo(side, {
+      type: "sign_request",
+      ts: nowSec(),
+      purpose: "reserve",
+      tx: txToB64(res.tx),
+      bps: res.bps,
+      deadline: this.reserveDeadline,
+    });
+    this.broadcast({ type: "stake_status", ts: nowSec(), side, status: "requested" });
+  }
+
+  private async onReserveSigned(side: Side, signedB64: string): Promise<void> {
+    const res = this.reservations[side];
+    if (this.state !== "reserving" || !res || res.status !== "pending" || !res.tx) return;
+    const slot = this.slot(side);
+    let tx: Transaction;
+    try {
+      tx = acceptPlayerSigned(res.tx, signedB64, slot.wallet);
+    } catch (err) {
+      this.sendError(side, "SIGN_REJECTED", err instanceof Error ? err.message : String(err), false);
+      return;
+    }
+    res.tx = null; // one submission per built tx
+    const start = Date.now();
+    try {
+      const sig = await sendAndConfirm(tx);
+      res.status = "confirmed";
+      res.sig = sig;
+      logTx({ sessionId: this.id, kind: "reserve", signature: sig, attempt: 1, durationMs: Date.now() - start });
+      this.broadcast({ type: "tx", ts: nowSec(), kind: "reserve", attempt: 1, status: "confirmed", sig });
+      this.broadcast({ type: "stake_status", ts: nowSec(), side, status: "confirmed", sig });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logTx({ sessionId: this.id, kind: "reserve", error: msg, attempt: 1, durationMs: Date.now() - start });
+      if (/blockhash|expired|block height exceeded/i.test(msg) && nowSec() < this.reserveDeadline) {
+        // Player took too long for this blockhash: re-issue a fresh request.
+        await this.requestReserve(side);
+        return;
+      }
+      this.log.warn({ side, msg }, "reserve.failed");
+      res.status = "failed";
+      this.broadcast({ type: "stake_status", ts: nowSec(), side, status: "failed" });
+      void this.cancelAndRelease("stake_not_signed", "reserve_failed");
+      return;
+    }
+    if (this.reservations.a?.status === "confirmed" && this.reservations.b?.status === "confirmed") {
+      if (this.reserveTimer) clearTimeout(this.reserveTimer);
+      this.reserveTimer = null;
+      this.transition("active", "stakes_reserved");
+      this.engine.start();
+    }
+  }
+
+  /**
+   * Cancel the on-chain session, THEN release every reservation that landed
+   * (router order: cancel_session first; the operator may release while the
+   * session account exists). Used for ties, unsigned stakes and pre-play
+   * abandons. Reservations are released for both sides unconditionally: the
+   * release helper is a no-op when nothing is bound.
+   */
+  private async cancelAndRelease(
+    reason: "tie" | "abandon" | "stake_not_signed" | "operator_decision",
+    logReason: string,
+  ): Promise<void> {
+    if (TERMINAL_STATES.has(this.state) || this.state === "cancelling") return;
+    if (this.reserveTimer) clearTimeout(this.reserveTimer);
+    this.reserveTimer = null;
+    this.transition("cancelling", logReason);
+    try {
+      if (this.pda) {
+        await settlement.cancelSession({ sessionId: this.id, pda: this.pda, broadcast: (f) => this.broadcast(f) });
+        await this.releaseBoth();
+      }
+      this.transition("cancelled", reason);
+      if (this.lobbyEligible) void lobby.closeListing(this.id, "Cancelled");
+      this.broadcast({ type: "cancelled", ts: nowSec(), reason });
+    } catch (err) {
+      this.fail(err instanceof Error ? err.message : String(err), "cancel_failed");
+      return;
+    }
+    this.cleanup();
+  }
+
+  /** Operator release of both players' reservations for this session. */
+  private async releaseBoth(): Promise<void> {
+    if (!this.pda) return;
+    for (const slot of [this.playerA, this.playerB]) {
+      if (!slot) continue;
+      try {
+        const sig = await releaseStake({ sessionPda: this.pda, holder: slot.wallet, streamId: slot.streamId });
+        if (sig) {
+          logTx({ sessionId: this.id, kind: "release", signature: sig, attempt: 1, durationMs: 0 });
+          this.broadcast({ type: "tx", ts: nowSec(), kind: "release", attempt: 1, status: "confirmed", sig });
+        }
+      } catch (err) {
+        // Don't fail the match over a release: the reservation also lapses at
+        // reserved_until and the holder can self-release a Cancelled session.
+        this.log.error({ wallet: slot.wallet, err: err instanceof Error ? err.message : String(err) }, "release.failed");
+      }
+    }
+  }
+
+  // ───────── disputes ─────────
+
+  /** A staked player asks to dispute during the dispute window. */
+  private async onDisputeRequested(side: Side, reasonCode: number): Promise<void> {
+    if (this.state !== "dispute_wait" || !this.pda) {
+      this.sendError(side, "DISPUTE_NOT_ALLOWED", "Disputes can only be opened while the result is in its dispute window.", false);
+      return;
+    }
+    const slot = this.slot(side);
+    try {
+      const tx = await buildOpenDisputeTx({
+        sessionPda: this.pda,
+        disputer: slot.wallet,
+        streamId: slot.streamId,
+        reasonCode,
+      });
+      this.pendingDispute[side] = tx;
+      this.sendTo(side, {
+        type: "sign_request",
+        ts: nowSec(),
+        purpose: "dispute",
+        tx: txToB64(tx),
+        deadline: nowSec() + 60,
+      });
+    } catch (err) {
+      this.sendError(side, "DISPUTE_NOT_ALLOWED", err instanceof Error ? err.message : String(err), false);
+    }
+  }
+
+  private async onDisputeSigned(side: Side, signedB64: string): Promise<void> {
+    const pending = this.pendingDispute[side];
+    if (!pending || this.state !== "dispute_wait") return;
+    delete this.pendingDispute[side];
+    try {
+      const tx = acceptPlayerSigned(pending, signedB64, this.slot(side).wallet);
+      const sig = await sendAndConfirm(tx);
+      logTx({ sessionId: this.id, kind: "dispute", signature: sig, attempt: 1, durationMs: 0 });
+      this.broadcast({ type: "tx", ts: nowSec(), kind: "dispute", attempt: 1, status: "confirmed", sig });
+      this.transition("under_review", `dispute_by_${side}`);
+    } catch (err) {
+      this.sendError(side, "DISPUTE_NOT_ALLOWED", err instanceof Error ? err.message : String(err), false);
+    }
+  }
+
+  /**
+   * After the dispute window: if the session carries a dispute, wait for the
+   * arbiter (resolve_dispute works only after dispute_end_ts). Upheld →
+   * Cancelled → release stakes. Rejected → has_dispute cleared → finalize.
+   * Returns "finalize" or "cancelled".
+   */
+  private async awaitArbiterIfDisputed(): Promise<"finalize" | "cancelled"> {
+    for (;;) {
+      if (this.destroyed || !this.pda) return "cancelled";
+      let st;
+      try {
+        st = await readSession(this.pda);
+      } catch {
+        st = undefined; // transient read failure: retry next poll
+      }
+      if (st === null) return "finalize"; // account gone: let finalize surface the real error
+      if (st && st.status === "Cancelled") {
+        await this.releaseBoth();
+        this.transition("cancelled", "dispute_upheld");
+        if (this.lobbyEligible) void lobby.closeListing(this.id, "Cancelled");
+        this.broadcast({ type: "cancelled", ts: nowSec(), reason: "dispute_upheld" });
+        return "cancelled";
+      }
+      if (st && !st.hasDispute) return "finalize";
+      if (st?.hasDispute && this.state !== "under_review") this.transition("under_review", "dispute_on_chain");
+      await new Promise((r) => setTimeout(r, REVIEW_POLL_MS));
     }
   }
 
@@ -270,22 +511,7 @@ export class LiveMatch {
 
   private async runSettlement(): Promise<void> {
     if (this.winner === "tie") {
-      this.transition("cancelling", "tie_match");
-      try {
-        if (this.pda) {
-          await settlement.cancelSession({
-            sessionId: this.id,
-            pda: this.pda,
-            broadcast: (f) => this.broadcast(f),
-          });
-        }
-        this.transition("cancelled", "tie");
-        if (this.lobbyEligible) void lobby.closeListing(this.id, "Cancelled");
-        this.broadcast({ type: "cancelled", ts: nowSec(), reason: "tie" });
-      } catch (err) {
-        this.fail(err instanceof Error ? err.message : String(err), "cancel_failed");
-      }
-      this.cleanup();
+      await this.cancelAndRelease("tie", "tie_match");
       return;
     }
     if (this.winner !== "a" && this.winner !== "b") return;
@@ -340,6 +566,11 @@ export class LiveMatch {
     await new Promise<void>((r) => setTimeout(r, waitMs));
     if (this.destroyed) return;
 
+    if ((await this.awaitArbiterIfDisputed()) === "cancelled") {
+      this.cleanup();
+      return;
+    }
+
     this.transition("finalizing", "window_elapsed");
     try {
       const { finalizeSigs, applySigs } = await settlement.finalizeAndApply({
@@ -362,6 +593,8 @@ export class LiveMatch {
           (s) => `https://solscan.io/tx/${s.sig}?cluster=${cluster}`,
         ),
       });
+      // A single-chunk apply releases every passed player's reservation
+      // on-chain (winner included), so there is nothing left to release here.
       this.log.info({ finalizeSigs, applySigs }, "match.done");
       // Rent reclaim is NOT attempted here: the router keeps session evidence
       // for 7 days after the dispute window (EvidenceRetention). The periodic
@@ -389,6 +622,8 @@ export class LiveMatch {
 
   private cleanup(): void {
     this.destroyed = true;
+    if (this.reserveTimer) clearTimeout(this.reserveTimer);
+    this.reserveTimer = null;
     this.engine.destroy();
     if (this.playerA.graceTimer) clearTimeout(this.playerA.graceTimer);
     if (this.playerB?.graceTimer) clearTimeout(this.playerB.graceTimer);
@@ -400,6 +635,11 @@ export class LiveMatch {
     if (this.state === "partnered" || this.state === "creating") {
       // No on-chain create yet, or create may or may not have landed; for simplicity we mark failed.
       this.fail(`player ${side} abandoned before play started`, "pre_play_abandon");
+      return;
+    }
+    if (this.state === "reserving") {
+      // Session exists, play hasn't started: void it and free any stake that landed.
+      void this.cancelAndRelease("abandon", `abandon_before_play_${side}`);
       return;
     }
     if (this.state === "active") {
@@ -467,6 +707,11 @@ export class LiveMatch {
     // phase state (e.g. RPS's commits_locked). Let the engine re-push it. (A
     // hard refresh wipes any in-memory secret either way.)
     this.engine.resync(side);
+    // Reconnected while we still need this player's stake signature: re-ask
+    // with a fresh blockhash (the earlier request may have gone unseen).
+    if (this.state === "reserving" && this.reservations[side]?.status === "pending") {
+      void this.requestReserve(side);
+    }
     this.broadcast({ type: "peer_status", ts: nowSec(), peer: side, connected: true });
     this.log.info({ side }, "match.attach");
     return true;
@@ -477,7 +722,12 @@ export class LiveMatch {
     slot.socket = null;
     this.log.info({ side, code, reason }, "match.detach");
     if (TERMINAL_STATES.has(this.state)) return;
-    if (this.state === "partnered" || this.state === "creating" || this.state === "active") {
+    if (
+      this.state === "partnered" ||
+      this.state === "creating" ||
+      this.state === "reserving" ||
+      this.state === "active"
+    ) {
       const graceUntil = nowSec() + config.RECONNECT_GRACE_SEC;
       this.broadcast({
         type: "peer_status",
@@ -527,6 +777,15 @@ export class LiveMatch {
       }
       case "forfeit": {
         this.forfeitMatch(side);
+        return;
+      }
+      case "signed_tx": {
+        if (frame.purpose === "reserve") void this.onReserveSigned(side, frame.tx);
+        else void this.onDisputeSigned(side, frame.tx);
+        return;
+      }
+      case "request_dispute": {
+        void this.onDisputeRequested(side, frame.reasonCode);
         return;
       }
       default:

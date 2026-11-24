@@ -189,3 +189,146 @@ export function stakeGuard(args: {
   }
   return null;
 }
+
+// ───────── Option B: HolderSale / ShareState / RouterParams / GameSession ─────────
+// Layouts per spec §11 and the on-chain devnet IDL (router 8jX8…, 31 ixs, 2026-11-25).
+
+export const holderSalePda = (streamIdHex: string, holder: string) =>
+  pda([Buffer.from("holder_sale"), hexToBytes(streamIdHex), new PublicKey(holder).toBuffer()]);
+export const shareStatePda = (streamIdHex: string) =>
+  pda([Buffer.from("share_state"), hexToBytes(streamIdHex)]);
+export const routerParamsPda = () => pda([Buffer.from("router_params")]);
+export const routerRolePda = (key: PublicKey) => pda([Buffer.from("router_role"), key.toBuffer()]);
+export const disputeRecordPda = (session: PublicKey, disputer: PublicKey) =>
+  pda([Buffer.from("dispute"), session.toBuffer(), disputer.toBuffer()]);
+
+export interface HolderSaleState {
+  sold: bigint;
+  reservedBps: number;
+  reservedSession: string | null; // null = none (default pubkey)
+  reservedUntil: number;
+}
+
+/** HolderSale (171 B): sold u64@73, reserved_bps u16@89, reserved_session@91, reserved_until i64@123. */
+function decodeHolderSale(d: Buffer): HolderSaleState {
+  const session = new PublicKey(d.subarray(91, 123));
+  return {
+    sold: d.readBigUInt64LE(73),
+    reservedBps: d.readUInt16LE(89),
+    reservedSession: session.equals(PublicKey.default) ? null : session.toBase58(),
+    reservedUntil: Number(d.readBigInt64LE(123)),
+  };
+}
+
+export interface RouterParams {
+  minEntryBps: number;
+  stakeLockGraceSecs: number;
+}
+
+let paramsCache: { at: number; value: RouterParams } | null = null;
+
+/** RouterParams (59 B): min_entry_bps u16@9, stake_lock_grace_secs i64@11. */
+export async function readRouterParams(): Promise<RouterParams> {
+  if (paramsCache && Date.now() - paramsCache.at < CFG_TTL_MS) return paramsCache.value;
+  const info = await connection().getAccountInfo(routerParamsPda(), "confirmed");
+  if (!info) throw new Error(`RouterParams ${routerParamsPda().toBase58()} not found (router not initialised for Option B)`);
+  const value = {
+    minEntryBps: info.data.readUInt16LE(9),
+    stakeLockGraceSecs: Number(info.data.readBigInt64LE(11)),
+  };
+  paramsCache = { at: Date.now(), value };
+  return value;
+}
+
+export interface StakeView {
+  /** Holder's chunk-0 bps. */
+  bps: number;
+  /** HolderSale, or null when the PDA doesn't exist (nothing sold, nothing reserved). */
+  sale: HolderSaleState | null;
+  /** E_snap = withdrawn_seen − pooled_sold, or null when ShareState doesn't exist. */
+  eSnap: bigint | null;
+}
+
+/** Read what's needed to size a stake: HolderSale per holder + the stream's ShareState. */
+export async function readStakeViews(
+  items: { streamId: string; holder: string; bps: number }[],
+): Promise<StakeView[]> {
+  const keys = items.flatMap((it) => [holderSalePda(it.streamId, it.holder), shareStatePda(it.streamId)]);
+  const infos = await connection().getMultipleAccountsInfo(keys, "confirmed");
+  return items.map((it, i) => {
+    const sale = infos[2 * i];
+    const share = infos[2 * i + 1];
+    // ShareState (65 B): pooled_sold u64@41, withdrawn_seen u64@49.
+    const eSnap = share ? share.data.readBigUInt64LE(49) - share.data.readBigUInt64LE(41) : null;
+    return { bps: it.bps, sale: sale ? decodeHolderSale(sale.data) : null, eSnap };
+  });
+}
+
+/**
+ * Largest loss (bps of the stream) the router will let this holder take, i.e.
+ * the exact predicate apply_delta / reserve_stake enforce (spec §4.4):
+ *   max d ≤ bps with floor((bps − d) · E_snap / 1e4) ≥ sold.
+ * No ShareState or nothing sold → the whole share is at stake.
+ */
+export function maxLossBps(v: StakeView): number {
+  const sold = v.sale?.sold ?? 0n;
+  if (v.eSnap === null || sold === 0n) return v.bps;
+  const e = v.eSnap;
+  if (e <= 0n) return 0; // sold > 0 but nothing withdrawn: can't keep enough → no loss allowed
+  // Smallest k with floor(k·E/1e4) ≥ sold  ⇔  k·E ≥ sold·1e4  ⇔  k = ceil(sold·1e4 / E).
+  const keep = Number((sold * 10000n + e - 1n) / e);
+  return Math.max(0, v.bps - keep);
+}
+
+/** A reservation still bound to some session blocks a new one (StakeAlreadyReserved). */
+export function hasActiveReservation(v: StakeView): boolean {
+  return !!v.sale && v.sale.reservedSession !== null && v.sale.reservedBps > 0;
+}
+
+/**
+ * Router min-entry rule after apply: every CHANGED entry ends at 0 or ≥ min.
+ * Loser keeps `loserBps − loss`; winner ends at `winnerExistingBps + loss`.
+ */
+export function minEntryViolation(args: {
+  loserBps: number;
+  winnerExistingBps: number;
+  loss: number;
+  minEntryBps: number;
+}): string | null {
+  const { loserBps, winnerExistingBps, loss, minEntryBps } = args;
+  if (loss <= 0) return null;
+  const rest = loserBps - loss;
+  if (rest > 0 && rest < minEntryBps) {
+    return `the loser would be left with ${rest} bps (the on-chain minimum is ${minEntryBps}, or exactly 0)`;
+  }
+  if (winnerExistingBps + loss < minEntryBps) {
+    return `the winner would end with ${winnerExistingBps + loss} bps (the on-chain minimum is ${minEntryBps})`;
+  }
+  return null;
+}
+
+export type SessionStatus = "Open" | "Submitted" | "Finalized" | "Cancelled";
+
+export interface SessionChainState {
+  status: SessionStatus;
+  hasDispute: boolean;
+  disputeEndTs: number;
+  startTs: number;
+}
+
+/** GameSession: start_ts@105, dispute_end_ts@121, status u8@129, has_dispute bool@166. */
+export async function readSession(sessionPda: string): Promise<SessionChainState | null> {
+  const info = await connection().getAccountInfo(new PublicKey(sessionPda), "confirmed");
+  if (!info) return null;
+  const d = info.data;
+  return {
+    status: (["Open", "Submitted", "Finalized", "Cancelled"] as const)[d[129]] ?? "Open",
+    hasDispute: d[166] === 1,
+    disputeEndTs: Number(d.readBigInt64LE(121)),
+    startTs: Number(d.readBigInt64LE(105)),
+  };
+}
+
+export function rpc(): Connection {
+  return connection();
+}

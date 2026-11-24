@@ -23,11 +23,83 @@ import {
   type SessionRow,
 } from "./db.js";
 import { logger } from "./log.js";
-import { EVIDENCE_RETENTION_SEC, closeSessionForRent, finalizeAndApply } from "./settlement.js";
+import { EVIDENCE_RETENTION_SEC, cancelSession, closeSessionForRent, finalizeAndApply } from "./settlement.js";
+import { readSession } from "./routerChain.js";
+import { releaseStake } from "./stakeTx.js";
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 
-export const RESUMABLE_STATES = new Set(["dispute_wait", "finalizing", "applying"]);
+export const RESUMABLE_STATES = new Set(["dispute_wait", "under_review", "finalizing", "applying"]);
+
+/** States where an on-chain session may exist but play never settled. */
+export const VOIDABLE_STATES = new Set(["creating", "reserving", "active", "complete"]);
+
+const REVIEW_POLL_MS = 5 * 60_000;
+
+async function releaseRowStakes(row: SessionRow): Promise<void> {
+  if (!row.pda) return;
+  const sides = [
+    { wallet: row.player_a_wallet, streamId: row.player_a_stream },
+    ...(row.player_b_wallet && row.player_b_stream
+      ? [{ wallet: row.player_b_wallet, streamId: row.player_b_stream }]
+      : []),
+  ];
+  for (const s of sides) {
+    try {
+      await releaseStake({ sessionPda: row.pda, holder: s.wallet, streamId: s.streamId });
+    } catch (err) {
+      logger.error(
+        { sessionId: row.id, wallet: s.wallet, err: err instanceof Error ? err.message : String(err) },
+        "reconciler.release_failed",
+      );
+    }
+  }
+}
+
+/**
+ * A match that had an on-chain session but never reached settlement (crash
+ * during reserving/play): cancel the session, then release any reservation
+ * so the players' stakes aren't locked until reserved_until.
+ */
+export async function voidRow(row: SessionRow): Promise<void> {
+  const log = logger.child({ sessionId: row.id, pda: row.pda });
+  try {
+    if (row.pda) {
+      const st = await readSession(row.pda);
+      if (st && st.status === "Open") {
+        await cancelSession({ sessionId: row.id, pda: row.pda, broadcast: () => {} });
+      }
+      await releaseRowStakes(row);
+    }
+    setFailed(row.id, "cancelled", "crash_recovery: voided before settlement");
+    log.warn({ prevState: row.state }, "reconciler.voided_pre_settlement");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    setFailed(row.id, "failed", `crash_recovery: void failed: ${msg}`);
+    log.error({ msg }, "reconciler.void_failed");
+  }
+}
+
+/** Wait out an arbiter decision for a resumed row. */
+async function awaitArbiter(row: SessionRow): Promise<"finalize" | "cancelled"> {
+  for (;;) {
+    let st;
+    try {
+      st = await readSession(row.pda!);
+    } catch {
+      st = undefined;
+    }
+    if (st === null) return "finalize";
+    if (st?.status === "Cancelled") {
+      await releaseRowStakes(row);
+      setSessionState(row.id, "cancelled");
+      return "cancelled";
+    }
+    if (st && !st.hasDispute) return "finalize";
+    if (st?.hasDispute) setSessionState(row.id, "under_review");
+    await new Promise((r) => setTimeout(r, REVIEW_POLL_MS));
+  }
+}
 
 /** Re-schedule finalize + apply for a submitted row. Returns false if not resumable. */
 export function resumeSettlement(row: SessionRow): boolean {
@@ -48,6 +120,10 @@ export function resumeSettlement(row: SessionRow): boolean {
   const pda = row.pda;
   setTimeout(() => {
     void (async () => {
+      if ((await awaitArbiter(row)) === "cancelled") {
+        log.warn("reconciler.resume_dispute_upheld");
+        return;
+      }
       setSessionState(row.id, "finalizing");
       try {
         const out = await finalizeAndApply({

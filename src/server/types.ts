@@ -14,10 +14,16 @@ export const MATCH_STATES = [
   "queued",
   "partnered",
   "creating",
+  // On-chain session exists; waiting for each player to co-sign reserve_stake
+  // (their consent + stake lock). Play starts only when both are confirmed.
+  "reserving",
   "active",
   "complete",
   "submitting",
   "dispute_wait",
+  // A staked player opened an on-chain dispute. Finalize is blocked until the
+  // arbiter resolves it: uphold → cancelled (stakes released), reject → finalize.
+  "under_review",
   "finalizing",
   "applying",
   "done",
@@ -48,7 +54,18 @@ export type RoundResult = {
   forfeitedBy?: Side | "both";
 };
 
-export type TxKind = "create" | "submit" | "finalize" | "apply" | "cancel";
+export type TxKind =
+  | "create"
+  | "reserve"
+  | "submit"
+  | "finalize"
+  | "apply"
+  | "cancel"
+  | "release"
+  | "dispute";
+
+/** What a player is asked to co-sign in the browser. */
+export type SignPurpose = "reserve" | "dispute";
 
 // ───────── Session shape mirroring streamlockfun backend ─────────
 // Local mirror until @streamlock/operator-sdk exports a typed SessionState.
@@ -278,9 +295,30 @@ export type ServerFrame =
       explorerLinks: string[];
     }
   | {
+      // Server asks THIS player to co-sign a transaction (base64, a legacy
+      // tx already partially signed by the operator). The player signs it
+      // and returns it via `signed_tx`; the server checks the message is
+      // byte-identical to what it built, then submits it.
+      type: "sign_request";
+      ts: number;
+      purpose: SignPurpose;
+      tx: string;
+      /** reserve: the bps of your stream locked for this match. */
+      bps?: number;
+      /** Unix ts after which the request lapses (reserve: match is cancelled). */
+      deadline: number;
+    }
+  | {
+      type: "stake_status";
+      ts: number;
+      side: Side;
+      status: "requested" | "confirmed" | "failed";
+      sig?: string;
+    }
+  | {
       type: "cancelled";
       ts: number;
-      reason: "tie" | "abandon" | "stream_busy" | "operator_decision";
+      reason: "tie" | "abandon" | "stream_busy" | "operator_decision" | "stake_not_signed" | "dispute_upheld";
       refundSig?: string;
     }
   | { type: "failed"; ts: number; reason: string; contact: string }
@@ -333,6 +371,14 @@ export const ClientFrame = z.discriminatedUnion("type", [
   // Voluntary whole-match resign — the sender forfeits, opponent wins. Shell-
   // handled (game-agnostic); distinct from RPS's per-round forfeit_round.
   z.object({ type: z.literal("forfeit") }),
+  // Reply to `sign_request`: the same tx, now carrying this player's signature.
+  z.object({
+    type: z.literal("signed_tx"),
+    purpose: z.enum(["reserve", "dispute"]),
+    tx: z.string().min(1).max(4096),
+  }),
+  // Staked player asks to open an on-chain dispute during the dispute window.
+  z.object({ type: z.literal("request_dispute"), reasonCode: z.number().int().min(0).max(255) }),
 ]);
 export type ClientFrame = z.infer<typeof ClientFrame>;
 
@@ -361,6 +407,11 @@ export const ERROR_CODES = [
   "WORLDID_NOT_CONFIGURED",
   "WALLET_MISMATCH",
   "SAME_HUMAN",
+  // Wallet sign-in
+  "AUTH_REQUIRED",
+  // Stake co-signing / disputes
+  "SIGN_REJECTED",
+  "DISPUTE_NOT_ALLOWED",
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
