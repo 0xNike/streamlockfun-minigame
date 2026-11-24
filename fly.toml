@@ -21,7 +21,10 @@ primary_region = "iad"
   TOKEN_ENV = "sol"
   LOG_LEVEL = "info"
   COHORT_MAX_RATIO = "5"
-  DISPUTE_WINDOW_SEC = "30"
+  # Requested window only. The router enforces max(config.dispute_window_seconds,
+  # 3600) and the server reads config from chain (86400 = 24 h on mainnet as of
+  # 2026-11), so the effective window is the larger of this and that.
+  DISPUTE_WINDOW_SEC = "3600"
   FINALIZE_BUFFER_SEC = "10"
   WORLD_ACTION = "play-rps"
   WORLD_ENVIRONMENT = "staging"

@@ -47,7 +47,11 @@ const Schema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((v) => v === "true"),
-  DISPUTE_WINDOW_SEC: z.coerce.number().int().positive().default(120),
+  // REQUESTED dispute window. The router rejects anything below
+  // max(config.dispute_window_seconds, 3600), so the server always uses
+  // routerChain.effectiveDisputeWindowSec(this), read from the StreamlockConfig
+  // PDA. Mainnet config is 86400 (24 h) as of 2026-11.
+  DISPUTE_WINDOW_SEC: z.coerce.number().int().positive().default(3600),
   FINALIZE_BUFFER_SEC: z.coerce.number().int().nonnegative().default(30),
   // endTs = nowSec() + ENDTS_BUFFER_SEC, recomputed per create attempt so
   // retries after a slow confirmation don't reuse a stale, now-past timestamp.

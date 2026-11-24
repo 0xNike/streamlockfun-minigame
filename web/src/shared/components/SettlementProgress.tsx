@@ -17,8 +17,10 @@ function explorer(sig: string, cluster: string) {
 
 function fmtClock(sec: number): string {
   if (sec <= 0) return "0s";
-  const m = Math.floor(sec / 60);
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
   const s = Math.floor(sec % 60);
+  if (h > 0) return `${h}h ${m.toString().padStart(2, "0")}m`;
   return m > 0 ? `${m}m ${s.toString().padStart(2, "0")}s` : `${s}s`;
 }
 
@@ -144,8 +146,9 @@ export function SettlementProgress({
           <div className="hold__label">Anti-cheat hold</div>
           <div className="hold__time">{fmtClock(remaining)}</div>
           <div className="hold__sub">
-            Brief safety window so the result can be verified before payout
-            settles. Payout starts automatically when this hits 0.
+            On-chain safety window: the result can be disputed until this
+            hits 0. After that, the winner's share is credited automatically.
+            You can close this page; it finishes without you.
           </div>
           <div className="hold__bar">
             <div className="hold__bar-fill" style={{ width: `${windowFillPct}%` }} />

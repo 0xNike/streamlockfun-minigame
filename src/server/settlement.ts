@@ -152,7 +152,7 @@ export async function createSession(args: {
   endTsBufferSec: number;
   disputeWindowSec: number;
   broadcast: BroadcastFn;
-}): Promise<{ pda: string; sig: string; endTs: number }> {
+}): Promise<{ pda: string; sig: string; endTs: number; disputeWindowSec: number }> {
   // endTs must be in the future at the moment of submission; we recompute it
   // per attempt and capture whichever value the successful attempt used.
   let lastEndTs = 0;
@@ -190,11 +190,27 @@ export async function createSession(args: {
         } as Parameters<typeof op.sessions.create>[0]);
       },
       extractSigs: (out) => [(out as { signature: string }).signature],
-    })) as { signature: string; result: { gameSessionPda: string } };
-    return { pda: out.result.gameSessionPda, sig: out.signature, endTs: lastEndTs };
+    })) as {
+      signature: string;
+      result: { gameSessionPda: string; disputeWindowSec?: number; disputeEndTs?: number };
+    };
+    // Since the 2026-11 router fix the API raises a short window to
+    // max(config, 3600) and reports what it encoded. Trust that over what we
+    // asked for, so finalize is scheduled against the real dispute_end_ts.
+    const window = out.result.disputeWindowSec ?? args.disputeWindowSec;
+    return { pda: out.result.gameSessionPda, sig: out.signature, endTs: lastEndTs, disputeWindowSec: window };
   } catch (err) {
     const recovered = await recoverFromAlreadyInUse(err, args.sessionId);
     if (recovered) {
+      // Recovered from chain: read the real window off the session account.
+      let window = args.disputeWindowSec;
+      try {
+        const st = await op.sessions.get(recovered.pda);
+        const de = (st.gameSession as { disputeEndTs?: number } | undefined)?.disputeEndTs;
+        if (typeof de === "number" && de > recovered.endTs) window = de - recovered.endTs;
+      } catch {
+        /* keep requested */
+      }
       args.broadcast({
         type: "tx",
         ts: Math.floor(Date.now() / 1000),
@@ -203,7 +219,7 @@ export async function createSession(args: {
         status: "confirmed",
         sig: recovered.sig,
       });
-      return recovered;
+      return { ...recovered, disputeWindowSec: window };
     }
     throw err;
   }
@@ -274,39 +290,95 @@ export async function submitDeltas(args: {
   }
 }
 
+/** True when an error means "this step already happened on-chain". */
+function isAlreadyDone(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    msg.includes("already_applied") ||
+    msg.includes("409") ||
+    isAlreadyInUse(err) // receipt PDA init on a re-run
+  );
+}
+
+/**
+ * Finalize chunk 0, then apply ONCE PER DISTINCT STREAM.
+ *
+ * Since the 2026-11 router fix, `apply_delta_to_ledger(chunk_index, stream_id)`
+ * reads the deltas from the finalized on-chain chunk and applies every entry
+ * for that stream at once, guarded by a DeltaApplyReceipt PDA. Our 1v1 deltas
+ * both live in the loser's stream, so a normal match is 1 finalize + 1 apply.
+ *
+ * Each step is safe to re-run (used by crash recovery): finalize is skipped
+ * when the session is already Finalized, and an apply whose receipt exists
+ * (API 409 `already_applied`) counts as done.
+ *
+ * SDK 0.1.9's `applyDelta` posts {streamIdHex, player, deltaBps}; the updated
+ * API ignores player/deltaBps and defaults chunkIndex to 0, so we call it once
+ * per stream rather than using `finalizeAndApplyAll` (one call per ENTRY).
+ */
 export async function finalizeAndApply(args: {
   sessionId: string;
   pda: string;
   deltas: DeltaEntry[];
   broadcast: BroadcastFn;
 }): Promise<{ finalizeSigs: string[]; applySigs: string[] }> {
-  const out = (await runChainOp({
-    sessionId: args.sessionId,
-    kind: "finalize",
-    broadcast: args.broadcast,
-    maxAttempts: 3,
-    isRetryable: (err) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      // 0x1780 = DisputeWindowNotEnded → chain time still behind; backoff helps.
-      // Network blips also retryable.
-      return (
-        isRateLimited(err) ||
-        msg.includes("Blockhash not found") ||
-        msg.includes("DisputeWindowNotEnded") ||
-        msg.includes("0x1780") ||
-        msg.includes("fetch failed") ||
-        msg.includes("timeout") ||
-        msg.includes("ECONN")
-      );
-    },
-    fn: () =>
-      op.sessions.finalizeAndApplyAll(args.pda, [{ chunkIndex: 0, deltas: args.deltas }]),
-    extractSigs: (out) => {
-      const o = out as { finalize?: string[]; apply?: string[] };
-      return [...(o.finalize ?? []), ...(o.apply ?? [])];
-    },
-  })) as { finalize?: string[]; apply?: string[] };
-  return { finalizeSigs: out.finalize ?? [], applySigs: out.apply ?? [] };
+  const retryable = (err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    // 0x1780 = DisputeWindowNotEnded → chain time still behind; backoff helps.
+    return (
+      isRateLimited(err) ||
+      msg.includes("Blockhash not found") ||
+      msg.includes("DisputeWindowNotEnded") ||
+      msg.includes("0x1780") ||
+      msg.includes("fetch failed") ||
+      msg.includes("timeout") ||
+      msg.includes("ECONN")
+    );
+  };
+
+  const finalizeSigs: string[] = [];
+  let status: string | undefined;
+  try {
+    status = (await op.sessions.get(args.pda)).gameSession?.status;
+  } catch {
+    /* unknown → attempt finalize */
+  }
+  if (status !== "Finalized") {
+    const out = (await runChainOp({
+      sessionId: args.sessionId,
+      kind: "finalize",
+      broadcast: args.broadcast,
+      maxAttempts: 4,
+      isRetryable: retryable,
+      fn: () => op.sessions.finalize(args.pda, 0),
+      extractSigs: (o) => [(o as { signature: string }).signature],
+    })) as { signature: string };
+    finalizeSigs.push(out.signature);
+  } else {
+    logger.info({ sessionId: args.sessionId }, "settlement.finalize_skipped_already_finalized");
+  }
+
+  const applySigs: string[] = [];
+  const streams = [...new Set(args.deltas.map((d) => d.streamId))];
+  for (const streamId of streams) {
+    const entry = args.deltas.find((d) => d.streamId === streamId)!;
+    try {
+      const out = (await runChainOp({
+        sessionId: args.sessionId,
+        kind: "apply",
+        broadcast: args.broadcast,
+        maxAttempts: 3,
+        isRetryable: (err) => !isAlreadyDone(err) && retryable(err),
+        fn: () => op.sessions.applyDelta(args.pda, entry),
+        extractSigs: (o) => [(o as { signature: string }).signature],
+      })) as { signature: string };
+      applySigs.push(out.signature);
+    } catch (err) {
+      if (!isAlreadyDone(err)) throw err;
+      logger.info({ sessionId: args.sessionId, streamId }, "settlement.apply_skipped_already_applied");
+    }
+  }
+  return { finalizeSigs, applySigs };
 }
 
 export async function cancelSession(args: {
@@ -336,7 +408,16 @@ export async function cancelSession(args: {
  * reclaim is housekeeping, never a settled-match blocker. Partial failures are
  * logged (a later sweep / the next run can retry).
  */
-export async function closeSessionForRent(sessionId: string, pda: string): Promise<void> {
+/**
+ * The router keeps session + delta-chunk evidence for 7 days after the dispute
+ * window ends; close_session / close_delta_chunk fail before that
+ * (EvidenceRetention). Callers must not attempt a close earlier: see
+ * `sweepRentReclaim`, which runs this for old `done` sessions.
+ */
+export const EVIDENCE_RETENTION_SEC = 7 * 24 * 60 * 60;
+
+/** Returns true when the close pass completed with no errors. */
+export async function closeSessionForRent(sessionId: string, pda: string): Promise<boolean> {
   // closeAll loops close_delta_chunk over [0, chunkCount); read the authoritative
   // count from session state (our matches are single-chunk, but don't hardcode).
   // disputer/payer omitted: no disputes in our flow, and rent refunds to the
@@ -353,14 +434,15 @@ export async function closeSessionForRent(sessionId: string, pda: string): Promi
       const { closed, errors } = await op.sessions.closeAll(pda, { chunkCount });
       if (errors.length > 0) {
         logger.warn({ sessionId, pda, chunkCount, closed, errors }, "settlement.close_partial");
-      } else {
-        logger.info({ sessionId, pda, chunkCount, closed }, "settlement.rent_reclaimed");
+        return false;
       }
-      return; // closeAll is self-tolerant; a returned result (even partial) is terminal for this pass
+      logger.info({ sessionId, pda, chunkCount, closed }, "settlement.rent_reclaimed");
+      return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn({ sessionId, pda, attempt, msg }, "settlement.close_failed");
       if (attempt < 3) await sleep(2000 * attempt);
     }
   }
+  return false;
 }

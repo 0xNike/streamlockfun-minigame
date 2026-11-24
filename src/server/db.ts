@@ -107,6 +107,9 @@ for (const [col, type] of [
   ["locked_b_at_match_time", "TEXT"],
   ["bps_if_a_loses", "INTEGER"],
   ["bps_if_b_loses", "INTEGER"],
+  // Unix ts when session + delta-chunk PDAs were closed for rent. Closing is
+  // only allowed 7 days after the dispute window ends (router EvidenceRetention).
+  ["rent_closed_at", "INTEGER"],
 ] as const) {
   if (!sessionColNames.has(col)) {
     db.exec(`ALTER TABLE sessions ADD COLUMN ${col} ${type}`);
@@ -318,6 +321,57 @@ const nonTerminalStmt = db.prepare<[], SessionRow>(`
 
 export function listNonTerminalSessions(): SessionRow[] {
   return nonTerminalStmt.all();
+}
+
+// A stream is "busy" while a match that stakes it has (or is about to have) an
+// on-chain session: from B-join ("creating") until done/cancelled/failed.
+// Unfilled offers ("partnered") don't lock the stream; whichever offer is
+// joined first does. Why: since the 2026-11 router fix, two pending matches on
+// one stream race at apply time and the second can fail with DeltaUnderflow
+// after it was already played.
+const streamBusyStmt = db.prepare<[string, string, string], { id: string; state: string }>(`
+  SELECT id, state FROM sessions
+  WHERE state NOT IN ('done', 'cancelled', 'failed', 'partnered')
+    AND (player_a_stream = ? OR player_b_stream = ?)
+    AND id != ?
+  LIMIT 1
+`);
+
+export function findBusyStreamSession(
+  streamId: string,
+  excludeSessionId = "",
+): { id: string; state: string } | undefined {
+  return streamBusyStmt.get(streamId, streamId, excludeSessionId);
+}
+
+const rentDueStmt = db.prepare<[number], SessionRow>(`
+  SELECT * FROM sessions
+  WHERE state = 'done'
+    AND pda IS NOT NULL
+    AND rent_closed_at IS NULL
+    AND end_ts IS NOT NULL
+    AND end_ts + dispute_window_sec < ?
+  ORDER BY updated_at ASC
+  LIMIT 20
+`);
+
+/** `done` sessions whose evidence retention ended before `retentionCutoff`. */
+export function listRentReclaimDue(retentionCutoff: number): SessionRow[] {
+  return rentDueStmt.all(retentionCutoff);
+}
+
+const markRentClosedStmt = db.prepare(`UPDATE sessions SET rent_closed_at = ? WHERE id = ?`);
+
+export function markRentClosed(id: string): void {
+  markRentClosedStmt.run(Math.floor(Date.now() / 1000), id);
+}
+
+const setDisputeWindowStmt = db.prepare(
+  `UPDATE sessions SET dispute_window_sec = ?, updated_at = ? WHERE id = ?`,
+);
+
+export function setDisputeWindow(id: string, disputeWindowSec: number): void {
+  setDisputeWindowStmt.run(disputeWindowSec, Math.floor(Date.now() / 1000), id);
 }
 
 const stuckSessionsStmt = db.prepare<[number], SessionRow>(`

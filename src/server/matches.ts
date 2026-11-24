@@ -20,6 +20,7 @@ import { getTokenMeta, peekTokenMeta } from "./tokenmeta.js";
 import {
   insertSession,
   setSessionPda,
+  setDisputeWindow,
   setSessionState,
   setPlayerB,
   setWinner,
@@ -97,7 +98,9 @@ export class LiveMatch {
   constructor(
     public readonly id: string,
     public readonly tokenMint: string,
-    public readonly disputeWindowSec: number,
+    /** Set at create from the router config; replaced by the window the
+     *  on-chain session actually encodes once create lands. */
+    public disputeWindowSec: number,
     public readonly bpsAtStake: number,
     public readonly playerA: PlayerSlot,
     public playerB: PlayerSlot | null,
@@ -226,7 +229,7 @@ export class LiveMatch {
   private async runOnChainCreate(): Promise<void> {
     if (!this.playerB) throw new Error("playerB missing");
     try {
-      const { pda, endTs } = await settlement.createSession({
+      const { pda, endTs, disputeWindowSec } = await settlement.createSession({
         sessionId: this.id,
         tokenMint: this.tokenMint,
         playerA: { wallet: this.playerA.wallet, streamId: this.playerA.streamId },
@@ -238,6 +241,10 @@ export class LiveMatch {
       this.pda = pda;
       this.endTs = endTs;
       setSessionPda(this.id, pda, endTs);
+      if (disputeWindowSec !== this.disputeWindowSec) {
+        this.disputeWindowSec = disputeWindowSec;
+        setDisputeWindow(this.id, disputeWindowSec);
+      }
       if (this.lobbyEligible)
         void lobby.updateListing(this.id, {
           status: "InProgress",
@@ -356,10 +363,9 @@ export class LiveMatch {
         ),
       });
       this.log.info({ finalizeSigs, applySigs }, "match.done");
-      // Best-effort rent reclaim — close the session + delta-chunk PDAs so the
-      // operator gets its ~0.026 SOL/match back. No-op until the SDK exposes
-      // closeAll (≥ 0.1.8); never blocks or fails the already-settled match.
-      void settlement.closeSessionForRent(this.id, this.pda);
+      // Rent reclaim is NOT attempted here: the router keeps session evidence
+      // for 7 days after the dispute window (EvidenceRetention). The periodic
+      // sweepRentReclaim (rentSweep.ts) closes it once that has passed.
     } catch (err) {
       this.fail(err instanceof Error ? err.message : String(err), "finalize_failed");
     }
