@@ -11,7 +11,9 @@
  *   - settled / mint mismatch
  * Reading the same accounts at create/join lets us refuse the match up front.
  *
- * Layouts mirror the live IDL (anchor idl fetch 2atKseCg…, 2026-11-24). Every
+ * The shared layouts below (config, ledger, chunk, session) mirror the mainnet
+ * IDL (2atKseCg…, 2026-11-24) and are identical on devnet. The Option B
+ * accounts further down exist only on the devnet router for now. Every
  * account starts with an 8-byte Anchor discriminator.
  */
 
