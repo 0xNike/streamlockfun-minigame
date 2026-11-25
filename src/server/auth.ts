@@ -35,11 +35,21 @@ const nowSec = () => Math.floor(Date.now() / 1000);
 // Challenges are keyed by their random nonce, so a request for someone else's
 // wallet can't overwrite theirs. Each is single use (consumed on verify).
 const challenges = new Map<string, { wallet: string; message: string; exp: number }>();
-const MAX_CHALLENGES_PER_WALLET = 5;
+const MAX_CHALLENGES_PER_WALLET = 10;
 const MAX_CHALLENGES_TOTAL = 50_000;
 // Per-IP nonce rate limit (fixed 1-minute window).
 const NONCE_PER_IP_PER_MIN = 20;
 const nonceHits = new Map<string, { windowStart: number; count: number }>();
+
+/**
+ * Client IP for rate limiting. Behind Fly, Fly-Client-IP is set by the edge and
+ * can't be spoofed; X-Forwarded-For's left-most entry (req.ip with trustProxy)
+ * is client-controlled.
+ */
+function clientIp(req: { ip: string; headers: Record<string, string | string[] | undefined> }): string {
+  const fly = req.headers["fly-client-ip"];
+  return (Array.isArray(fly) ? fly[0] : fly) || req.ip;
+}
 
 function rateLimited(ip: string): boolean {
   const t = nowSec();
@@ -142,7 +152,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     } catch {
       return reply.code(400).send({ error: { code: "BAD_FRAME", message: "invalid wallet", fatal: true } });
     }
-    if (rateLimited(req.ip) || challenges.size >= MAX_CHALLENGES_TOTAL) {
+    if (rateLimited(clientIp(req)) || challenges.size >= MAX_CHALLENGES_TOTAL) {
       return reply.code(429).send({ error: { code: "RATE_LIMITED", message: "too many sign-in attempts; wait a minute", fatal: false } });
     }
     const issuedAt = nowSec();

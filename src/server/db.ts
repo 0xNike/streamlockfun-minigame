@@ -113,6 +113,9 @@ for (const [col, type] of [
   // Unix ts when the stake sweep confirmed no reservation is still bound to
   // this session (released, applied, or never landed).
   ["stakes_released_at", "INTEGER"],
+  // Unix ts the stake sweep last skipped this row because a result is on chain
+  // but the row never applied (needs an operator). Re-checked daily, sorted last.
+  ["stakes_manual_at", "INTEGER"],
 ] as const) {
   if (!sessionColNames.has(col)) {
     db.exec(`ALTER TABLE sessions ADD COLUMN ${col} ${type}`);
@@ -369,19 +372,29 @@ export function markRentClosed(id: string): void {
   markRentClosedStmt.run(Math.floor(Date.now() / 1000), id);
 }
 
-const stakeSweepStmt = db.prepare<[number], SessionRow>(`
+const stakeSweepStmt = db.prepare<[number, number], SessionRow>(`
   SELECT * FROM sessions
   WHERE state IN ('done', 'cancelled', 'failed')
     AND pda IS NOT NULL
     AND stakes_released_at IS NULL
     AND updated_at > ?
-  ORDER BY updated_at ASC
+    AND (stakes_manual_at IS NULL OR stakes_manual_at < ?)
+  ORDER BY stakes_manual_at IS NOT NULL, updated_at ASC
   LIMIT 50
 `);
 
-/** Terminal rows with an on-chain session whose reservations aren't known to be cleared. */
-export function listStakeSweepCandidates(updatedAfter: number): SessionRow[] {
-  return stakeSweepStmt.all(updatedAfter);
+/**
+ * Terminal rows with an on-chain session whose reservations aren't known to be
+ * cleared. Rows flagged for manual handling come last and only once per day.
+ */
+export function listStakeSweepCandidates(updatedAfter: number, manualRecheckBefore: number): SessionRow[] {
+  return stakeSweepStmt.all(updatedAfter, manualRecheckBefore);
+}
+
+const markStakesManualStmt = db.prepare(`UPDATE sessions SET stakes_manual_at = ? WHERE id = ?`);
+
+export function markStakesManual(id: string): void {
+  markStakesManualStmt.run(Math.floor(Date.now() / 1000), id);
 }
 
 const markStakesReleasedStmt = db.prepare(`UPDATE sessions SET stakes_released_at = ? WHERE id = ?`);

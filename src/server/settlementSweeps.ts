@@ -19,6 +19,7 @@ import {
   listRentReclaimDue,
   listStakeSweepCandidates,
   markRentClosed,
+  markStakesManual,
   markStakesReleased,
   setFailed,
   setSessionState,
@@ -196,7 +197,7 @@ export async function sweepStakeReleases(): Promise<void> {
   if (stakeSweeping) return;
   stakeSweeping = true;
   try {
-    const rows = listStakeSweepCandidates(nowSec() - STAKE_SWEEP_LOOKBACK_SEC);
+    const rows = listStakeSweepCandidates(nowSec() - STAKE_SWEEP_LOOKBACK_SEC, nowSec() - 24 * 3600);
     for (const row of rows) {
       try {
         await sweepRow(row);
@@ -241,6 +242,7 @@ async function sweepRow(row: SessionRow): Promise<void> {
     // A result is on chain but this row never finished applying: releasing
     // would let the loser escape. Leave it for an operator.
     logger.error({ sessionId: row.id, pda, chainStatus: st.status, rowState: row.state }, "stake_sweep.result_pending_manual");
+    markStakesManual(row.id);
     return;
   }
   if (st.status === "Open") {
