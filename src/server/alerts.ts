@@ -4,23 +4,30 @@
  * TELEGRAM_ALERT_CHAT_ID are set, sent to that Telegram chat.
  *
  * Alerts are de-duplicated per (kind, key) for the life of the process, so a
- * poller can call them every cycle. After a restart an open dispute alerts
- * once more, which is intended.
+ * poller can call them every cycle; an undelivered Telegram message is retried
+ * on the next call. After a restart an open dispute alerts once more, which is
+ * intended. Known gap: a second dispute on the same match (after the first was
+ * rejected) doesn't alert again in the same process.
  */
 
 import { config } from "./config.js";
 import { logger } from "./log.js";
 
-const sent = new Set<string>();
+// Logged once per (kind, key); Telegram is retried on every call until it
+// succeeds, so a failed POST is retried by the next poll instead of lost.
+const logged = new Set<string>();
+const delivered = new Set<string>();
 
-export type AlertKind = "dispute_opened" | "arbiter_sla_at_risk";
+export type AlertKind = "dispute_opened" | "arbiter_sla_at_risk" | "test";
 
-export async function alertOnce(kind: AlertKind, key: string, text: string, fields: Record<string, unknown> = {}): Promise<void> {
+export async function alertOnce(kind: AlertKind, key: string, text: string, fields: Record<string, unknown> = {}): Promise<boolean> {
   const id = `${kind}:${key}`;
-  if (sent.has(id)) return;
-  sent.add(id);
-  logger.error({ alert: kind, key, ...fields }, `ALERT.${kind} ${text}`);
-  if (!config.TELEGRAM_BOT_TOKEN || !config.TELEGRAM_ALERT_CHAT_ID) return;
+  if (!logged.has(id)) {
+    logged.add(id);
+    logger.error({ alert: kind, key, ...fields }, `ALERT.${kind} ${text}`);
+  }
+  if (!config.TELEGRAM_BOT_TOKEN || !config.TELEGRAM_ALERT_CHAT_ID) return false;
+  if (delivered.has(id)) return true;
   try {
     const res = await fetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/sendMessage`, {
       method: "POST",
@@ -28,10 +35,15 @@ export async function alertOnce(kind: AlertKind, key: string, text: string, fiel
       body: JSON.stringify({ chat_id: config.TELEGRAM_ALERT_CHAT_ID, text: `[games] ${text}`, disable_web_page_preview: true }),
       signal: AbortSignal.timeout(10_000),
     });
-    if (!res.ok) logger.warn({ kind, status: res.status }, "alert.telegram_failed");
+    if (res.ok) {
+      delivered.add(id);
+      return true;
+    }
+    logger.warn({ kind, key, status: res.status }, "alert.telegram_failed");
   } catch (err) {
-    logger.warn({ kind, err: err instanceof Error ? err.message : String(err) }, "alert.telegram_failed");
+    logger.warn({ kind, key, err: err instanceof Error ? err.message : String(err) }, "alert.telegram_failed");
   }
+  return false;
 }
 
 export function alertDisputeOpened(args: {
