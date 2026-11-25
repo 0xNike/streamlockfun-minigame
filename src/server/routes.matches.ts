@@ -48,8 +48,11 @@ import {
   readRouterParams,
   readStakeViews,
   readStreamStates,
+  rpc,
   stakeGuard,
 } from "./routerChain.js";
+import { PublicKey } from "@solana/web3.js";
+import { PLAYER_RENT_NEED_LAMPORTS, operatorFundsNewHolderSale } from "./rentCaps.js";
 
 type GuardReject = { status: number; code: string; message: string };
 
@@ -129,6 +132,32 @@ async function chainGuard(args: {
         status: 422,
         code: "STREAM_NOTHING_UNSOLD",
         message: "You've already sold your share of this stream, so there's nothing left to stake.",
+      };
+    }
+  }
+  // A new HolderSale costs rent. Past the operator's rent caps the player pays
+  // it, so refuse now rather than fail reserve_stake after the session exists.
+  for (const s of sides) {
+    if (s.view.sale !== null || operatorFundsNewHolderSale(s.who.wallet)) continue;
+    let lamports: number;
+    try {
+      lamports = await rpc().getBalance(new PublicKey(s.who.wallet), "confirmed");
+    } catch {
+      return {
+        ok: false,
+        status: 503,
+        code: "CHAIN_UNAVAILABLE",
+        message: "Couldn't read your wallet balance right now — please try again in a moment.",
+      };
+    }
+    if (lamports < PLAYER_RENT_NEED_LAMPORTS) {
+      return {
+        ok: false,
+        status: 422,
+        code: "RESERVE_RENT_NEEDS_SOL",
+        message:
+          `Staking this stream for the first time needs about ${(PLAYER_RENT_NEED_LAMPORTS / 1e9).toFixed(3)} SOL ` +
+          "of refundable rent in your wallet. Add a little SOL and try again.",
       };
     }
   }

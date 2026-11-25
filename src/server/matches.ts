@@ -28,8 +28,10 @@ import {
   setFailed,
   signaturesForSession,
   logTx,
+  recordRentFunding,
 } from "./db.js";
 import { logger } from "./log.js";
+import { alertDisputeOpened } from "./alerts.js";
 import * as lobby from "./lobby.js";
 import type { GameEngine, GameHost } from "./games/engine.js";
 import { DEFAULT_GAME_ID, getGame } from "./games/registry.js";
@@ -54,7 +56,8 @@ import {
   sendAndConfirm,
   txToB64,
 } from "./stakeTx.js";
-import { readSession } from "./routerChain.js";
+import { holderSalePda, readSession, rpc } from "./routerChain.js";
+import { operatorFundsNewHolderSale } from "./rentCaps.js";
 
 /** How often a match under review re-reads the session for the arbiter's decision. */
 const REVIEW_POLL_MS = 5 * 60_000;
@@ -64,6 +67,8 @@ interface StakeReservation {
   status: "pending" | "confirmed" | "failed";
   tx: Transaction | null;
   sig?: string;
+  /** The current tx makes the operator fund a new HolderSale (counts toward rent caps). */
+  operatorFunded?: boolean;
 }
 
 const nowSec = () => Math.floor(Date.now() / 1000);
@@ -315,11 +320,15 @@ export class LiveMatch {
     if (this.state !== "reserving" || !res || res.status !== "pending" || !this.pda) return;
     const slot = this.slot(side);
     try {
+      // Rent only matters when the HolderSale is new; past a cap the player pays.
+      const exists = (await rpc().getAccountInfo(holderSalePda(slot.streamId, slot.wallet), "confirmed")) !== null;
+      res.operatorFunded = !exists && operatorFundsNewHolderSale(slot.wallet);
       res.tx = await buildReserveStakeTx({
         sessionPda: this.pda,
         holder: slot.wallet,
         streamId: slot.streamId,
         bps: res.bps,
+        rentPayer: exists || res.operatorFunded ? "operator" : "player",
       });
     } catch (err) {
       this.log.error({ side, err: err instanceof Error ? err.message : String(err) }, "reserve.build_failed");
@@ -352,6 +361,7 @@ export class LiveMatch {
     const start = Date.now();
     try {
       const sig = await sendAndConfirm(tx);
+      if (res.operatorFunded) recordRentFunding(slot.wallet, slot.streamId, this.id);
       if (this.state !== "reserving" || this.destroyed) {
         // The match was cancelled (deadline, abandon, the other side failing)
         // while this send was in flight. Free what just landed and stop.
@@ -490,6 +500,7 @@ export class LiveMatch {
       logTx({ sessionId: this.id, kind: "dispute", signature: sig, attempt: 1, durationMs: 0 });
       this.broadcast({ type: "tx", ts: nowSec(), kind: "dispute", attempt: 1, status: "confirmed", sig });
       this.transition("under_review", `dispute_by_${side}`);
+      alertDisputeOpened({ sessionId: this.id, pda: this.pda!, side, source: "server_relayed" });
     } catch (err) {
       this.sendError(side, "DISPUTE_NOT_ALLOWED", err instanceof Error ? err.message : String(err), false);
     }
@@ -519,7 +530,10 @@ export class LiveMatch {
         return "cancelled";
       }
       if (st && !st.hasDispute) return "finalize";
-      if (st?.hasDispute && this.state !== "under_review") this.transition("under_review", "dispute_on_chain");
+      if (st?.hasDispute) {
+        alertDisputeOpened({ sessionId: this.id, pda: this.pda, side: "unknown", source: "chain_poll", disputeEndTs: st.disputeEndTs });
+        if (this.state !== "under_review") this.transition("under_review", "dispute_on_chain");
+      }
       await new Promise((r) => setTimeout(r, REVIEW_POLL_MS));
     }
   }

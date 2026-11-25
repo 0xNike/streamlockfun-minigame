@@ -91,6 +91,18 @@ db.exec(`
     verified_at  INTEGER NOT NULL,
     last_seen_at INTEGER NOT NULL
   );
+
+  -- One row per HolderSale PDA whose rent the operator funded (reserve_stake
+  -- confirmed with the operator as payer on a new account). Drives the daily
+  -- and per-wallet rent caps.
+  CREATE TABLE IF NOT EXISTS rent_fundings (
+    wallet     TEXT NOT NULL,
+    stream_id  TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    funded_at  INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_rent_fundings_wallet ON rent_fundings(wallet);
+  CREATE INDEX IF NOT EXISTS idx_rent_fundings_ts ON rent_fundings(funded_at);
 `);
 
 // Migrations for previously-deployed schemas (v0 is forgiving — additive only).
@@ -401,6 +413,34 @@ const markStakesReleasedStmt = db.prepare(`UPDATE sessions SET stakes_released_a
 
 export function markStakesReleased(id: string): void {
   markStakesReleasedStmt.run(Math.floor(Date.now() / 1000), id);
+}
+
+const disputeWatchStmt = db.prepare<[], SessionRow>(`
+  SELECT * FROM sessions
+  WHERE state IN ('dispute_wait', 'under_review')
+    AND pda IS NOT NULL
+  ORDER BY updated_at ASC
+  LIMIT 200
+`);
+
+/** Rows in their dispute window or awaiting the arbiter. */
+export function listDisputeWatchRows(): SessionRow[] {
+  return disputeWatchStmt.all();
+}
+
+const rentSinceStmt = db.prepare<[number], { n: number }>(`SELECT COUNT(*) AS n FROM rent_fundings WHERE funded_at > ?`);
+const rentWalletStmt = db.prepare<[string], { n: number }>(`SELECT COUNT(*) AS n FROM rent_fundings WHERE wallet = ?`);
+const rentInsertStmt = db.prepare(
+  `INSERT INTO rent_fundings (wallet, stream_id, session_id, funded_at) VALUES (?, ?, ?, ?)`,
+);
+
+/** Operator-funded HolderSales since `since` (all wallets) and ever for `wallet`. */
+export function rentFundingCounts(wallet: string, since: number): { recent: number; wallet: number } {
+  return { recent: rentSinceStmt.get(since)!.n, wallet: rentWalletStmt.get(wallet)!.n };
+}
+
+export function recordRentFunding(wallet: string, streamId: string, sessionId: string): void {
+  rentInsertStmt.run(wallet, streamId, sessionId, Math.floor(Date.now() / 1000));
 }
 
 const setDisputeWindowStmt = db.prepare(

@@ -79,9 +79,11 @@ export async function buildReserveStakeTx(args: {
   holder: string;
   streamId: string;
   bps: number;
+  /** Who funds the HolderSale if it's new (see rentCaps.ts). Defaults to RESERVE_RENT_PAYER. */
+  rentPayer?: "operator" | "player";
 }): Promise<Transaction> {
   const holder = new PublicKey(args.holder);
-  const payer = config.RESERVE_RENT_PAYER === "player" ? holder : OPERATOR_PUBLIC_KEY;
+  const payer = (args.rentPayer ?? config.RESERVE_RENT_PAYER) === "player" ? holder : OPERATOR_PUBLIC_KEY;
   const keys = [
     ro(holder, true),
     rw(payer, true),

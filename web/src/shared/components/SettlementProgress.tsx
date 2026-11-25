@@ -3,6 +3,11 @@ import type { MatchSnapshot, MatchState, Side, TxKind } from "../types";
 import { formatToken, stakeBaseUnits } from "../format";
 import { sendActive } from "../ws";
 
+// Dispute button is hidden at launch (owner decision 2026-11-25). The server
+// still handles request_dispute and on-chain disputes; set
+// VITE_DISPUTES_ENABLED=true to show it.
+const DISPUTES_ENABLED = import.meta.env.VITE_DISPUTES_ENABLED === "true";
+
 interface TxEvent {
   kind: TxKind;
   attempt: number;
@@ -172,7 +177,7 @@ export function SettlementProgress({
             position, which the winner can sell from the Streamlock app in any
             unlock window.
           </div>
-          {you && <DisputeButton />}
+          {you && DISPUTES_ENABLED && <DisputeButton />}
         </div>
       ) : (
         <div className="settle__elapsed dim small">

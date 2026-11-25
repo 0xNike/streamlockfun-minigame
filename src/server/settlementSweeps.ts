@@ -16,6 +16,7 @@
 import type { DeltaEntry } from "@streamlock/operator-sdk";
 import { config } from "./config.js";
 import {
+  listDisputeWatchRows,
   listRentReclaimDue,
   listStakeSweepCandidates,
   markRentClosed,
@@ -26,6 +27,7 @@ import {
   type SessionRow,
 } from "./db.js";
 import { logger } from "./log.js";
+import { alertArbiterSla, alertDisputeOpened } from "./alerts.js";
 import { EVIDENCE_RETENTION_SEC, cancelSession, closeSessionForRent, finalizeAndApply } from "./settlement.js";
 import { readSession, readStakeViews } from "./routerChain.js";
 import { releaseStake } from "./stakeTx.js";
@@ -107,7 +109,10 @@ async function awaitArbiter(row: SessionRow): Promise<"finalize" | "cancelled"> 
       return "cancelled";
     }
     if (st && !st.hasDispute) return "finalize";
-    if (st?.hasDispute) setSessionState(row.id, "under_review");
+    if (st?.hasDispute) {
+      alertDisputeOpened({ sessionId: row.id, pda: row.pda!, side: "unknown", source: "resume_poll", disputeEndTs: st.disputeEndTs });
+      setSessionState(row.id, "under_review");
+    }
     await new Promise((r) => setTimeout(r, REVIEW_POLL_MS));
   }
 }
@@ -261,4 +266,41 @@ const STAKE_SWEEP_EVERY_MS = 15 * 60 * 1000;
 export function startStakeSweep(): NodeJS.Timeout {
   setTimeout(() => void sweepStakeReleases(), 90_000);
   return setInterval(() => void sweepStakeReleases(), STAKE_SWEEP_EVERY_MS);
+}
+
+// ───────── dispute watcher ─────────
+//
+// A player can open a dispute straight on chain (no server involved), and the
+// live path only looks after the window ends. This polls every row in its
+// dispute window or under review so the alert fires within minutes, and warns
+// when the arbiter SLA is at risk. Alerts de-duplicate per session.
+
+let disputeWatching = false;
+
+export async function watchDisputes(): Promise<void> {
+  if (disputeWatching) return;
+  disputeWatching = true;
+  try {
+    for (const row of listDisputeWatchRows()) {
+      try {
+        const st = await readSession(row.pda!);
+        if (!st || !st.hasDispute || st.status === "Cancelled") continue;
+        alertDisputeOpened({ sessionId: row.id, pda: row.pda!, side: "unknown", source: "dispute_watch", disputeEndTs: st.disputeEndTs });
+        if (nowSec() > st.disputeEndTs + config.ARBITER_SLA_WARN_SEC) {
+          alertArbiterSla({ sessionId: row.id, pda: row.pda!, disputeEndTs: st.disputeEndTs });
+        }
+      } catch (err) {
+        logger.warn({ sessionId: row.id, err: err instanceof Error ? err.message : String(err) }, "dispute_watch.read_failed");
+      }
+    }
+  } finally {
+    disputeWatching = false;
+  }
+}
+
+const DISPUTE_WATCH_EVERY_MS = 5 * 60 * 1000;
+
+export function startDisputeWatch(): NodeJS.Timeout {
+  setTimeout(() => void watchDisputes(), 30_000);
+  return setInterval(() => void watchDisputes(), DISPUTE_WATCH_EVERY_MS);
 }

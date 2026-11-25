@@ -62,6 +62,13 @@ const Schema = z.object({
   // settles). "operator" lets players with 0 SOL (Privy email/Google
   // embedded wallets) play; "player" makes them pay their own.
   RESERVE_RENT_PAYER: z.enum(["operator", "player"]).default("operator"),
+  // Caps on operator-funded HolderSale rent (only applies when the PDA is new
+  // and RESERVE_RENT_PAYER=operator). Past either cap the player pays their
+  // own rent. 0 disables a cap.
+  //   DAILY: new HolderSales the operator funds per rolling 24 h, all wallets.
+  //   PER_WALLET: HolderSales the operator ever funds for one wallet.
+  RESERVE_RENT_DAILY_CAP: z.coerce.number().int().nonnegative().default(200),
+  RESERVE_RENT_PER_WALLET_CAP: z.coerce.number().int().nonnegative().default(3),
   // Seconds both players have to co-sign their stake reservation after the
   // on-chain session is created. Miss it → the match is cancelled and any
   // reservation that did land is released.
@@ -69,6 +76,13 @@ const Schema = z.object({
   // HMAC secret for wallet sign-in tokens. REQUIRED in production; dev falls
   // back to a random per-process secret (tokens die on restart).
   AUTH_SESSION_SECRET: z.string().min(32).optional(),
+  // Ops alerts (dispute opened, arbiter SLA at risk). Always logged at error
+  // level with an "ALERT." event; also sent to Telegram when both are set.
+  TELEGRAM_BOT_TOKEN: z.string().optional(),
+  TELEGRAM_ALERT_CHAT_ID: z.string().optional(),
+  // Warn when a dispute is still unresolved this long after dispute_end_ts
+  // (owner SLA: arbiter decides within 48 h of dispute end).
+  ARBITER_SLA_WARN_SEC: z.coerce.number().int().positive().default(36 * 3600),
   // Drives the Streamlock app explorer link (app.streamlock.fun/<TOKEN_ENV>/<mint>).
   // "soldev" → devnet, "sol" → mainnet. Mirrors STREAMLOCK_CHAIN.
   TOKEN_ENV: z.enum(["sol", "soldev"]).default("soldev"),
