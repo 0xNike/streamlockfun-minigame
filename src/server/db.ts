@@ -110,6 +110,9 @@ for (const [col, type] of [
   // Unix ts when session + delta-chunk PDAs were closed for rent. Closing is
   // only allowed 7 days after the dispute window ends (router EvidenceRetention).
   ["rent_closed_at", "INTEGER"],
+  // Unix ts when the stake sweep confirmed no reservation is still bound to
+  // this session (released, applied, or never landed).
+  ["stakes_released_at", "INTEGER"],
 ] as const) {
   if (!sessionColNames.has(col)) {
     db.exec(`ALTER TABLE sessions ADD COLUMN ${col} ${type}`);
@@ -364,6 +367,27 @@ const markRentClosedStmt = db.prepare(`UPDATE sessions SET rent_closed_at = ? WH
 
 export function markRentClosed(id: string): void {
   markRentClosedStmt.run(Math.floor(Date.now() / 1000), id);
+}
+
+const stakeSweepStmt = db.prepare<[number], SessionRow>(`
+  SELECT * FROM sessions
+  WHERE state IN ('done', 'cancelled', 'failed')
+    AND pda IS NOT NULL
+    AND stakes_released_at IS NULL
+    AND updated_at > ?
+  ORDER BY updated_at ASC
+  LIMIT 50
+`);
+
+/** Terminal rows with an on-chain session whose reservations aren't known to be cleared. */
+export function listStakeSweepCandidates(updatedAfter: number): SessionRow[] {
+  return stakeSweepStmt.all(updatedAfter);
+}
+
+const markStakesReleasedStmt = db.prepare(`UPDATE sessions SET stakes_released_at = ? WHERE id = ?`);
+
+export function markStakesReleased(id: string): void {
+  markStakesReleasedStmt.run(Math.floor(Date.now() / 1000), id);
 }
 
 const setDisputeWindowStmt = db.prepare(

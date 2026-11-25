@@ -352,6 +352,16 @@ export class LiveMatch {
     const start = Date.now();
     try {
       const sig = await sendAndConfirm(tx);
+      if (this.state !== "reserving" || this.destroyed) {
+        // The match was cancelled (deadline, abandon, the other side failing)
+        // while this send was in flight. Free what just landed and stop.
+        res.status = "confirmed";
+        res.sig = sig;
+        logTx({ sessionId: this.id, kind: "reserve", signature: sig, attempt: 1, durationMs: Date.now() - start });
+        this.log.warn({ side, state: this.state }, "reserve.landed_after_cancel");
+        await this.releaseSide(slot);
+        return;
+      }
       res.status = "confirmed";
       res.sig = sig;
       logTx({ sessionId: this.id, kind: "reserve", signature: sig, attempt: 1, durationMs: Date.now() - start });
@@ -360,6 +370,7 @@ export class LiveMatch {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logTx({ sessionId: this.id, kind: "reserve", error: msg, attempt: 1, durationMs: Date.now() - start });
+      if (this.state !== "reserving" || this.destroyed) return; // already cancelled; nothing landed
       if (/blockhash|expired|block height exceeded/i.test(msg) && nowSec() < this.reserveDeadline) {
         // Player took too long for this blockhash: re-issue a fresh request.
         await this.requestReserve(side);
@@ -371,7 +382,11 @@ export class LiveMatch {
       void this.cancelAndRelease("stake_not_signed", "reserve_failed");
       return;
     }
-    if (this.reservations.a?.status === "confirmed" && this.reservations.b?.status === "confirmed") {
+    if (
+      this.state === "reserving" &&
+      this.reservations.a?.status === "confirmed" &&
+      this.reservations.b?.status === "confirmed"
+    ) {
       if (this.reserveTimer) clearTimeout(this.reserveTimer);
       this.reserveTimer = null;
       this.transition("active", "stakes_reserved");
@@ -403,6 +418,9 @@ export class LiveMatch {
       if (this.lobbyEligible) void lobby.closeListing(this.id, "Cancelled");
       this.broadcast({ type: "cancelled", ts: nowSec(), reason });
     } catch (err) {
+      // Cancel failed: still try to free any stake (the operator may release an
+      // Open session). The stake sweep retries whatever is left bound.
+      await this.releaseBoth();
       this.fail(err instanceof Error ? err.message : String(err), "cancel_failed");
       return;
     }
@@ -885,6 +903,12 @@ export class LiveMatch {
 
   private transition(next: MatchState, reason: string): void {
     const prev = this.state;
+    // Terminal states are final, and `cancelling` may only end in `cancelled`
+    // (fail() sets `failed` directly). Late async callbacks must not revive a match.
+    if (TERMINAL_STATES.has(prev) || (prev === "cancelling" && next !== "cancelled")) {
+      this.log.warn({ prev, next, reason }, "state.transition_refused");
+      return;
+    }
     this.state = next;
     setSessionState(this.id, next);
     this.log.info({ prev, next, reason }, "state.transition");

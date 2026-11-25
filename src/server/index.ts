@@ -8,7 +8,7 @@ import { config } from "./config.js";
 import { logger } from "./log.js";
 import "./db.js"; // side-effect: open + migrate
 import { runOnStartup } from "./reconciler.js";
-import { startRentSweep } from "./settlementSweeps.js";
+import { startRentSweep, startStakeSweep } from "./settlementSweeps.js";
 import { buildHttp } from "./http.js";
 import { registerWs } from "./ws.js";
 
@@ -26,6 +26,7 @@ async function main() {
 
   runOnStartup();
   startRentSweep();
+  startStakeSweep();
 
   const app = await buildHttp();
   await registerWs(app);

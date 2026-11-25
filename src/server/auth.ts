@@ -32,8 +32,36 @@ const SECRET: Buffer = (() => {
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 
-// One outstanding challenge per wallet; consumed on verify.
-const challenges = new Map<string, { message: string; exp: number }>();
+// Challenges are keyed by their random nonce, so a request for someone else's
+// wallet can't overwrite theirs. Each is single use (consumed on verify).
+const challenges = new Map<string, { wallet: string; message: string; exp: number }>();
+const MAX_CHALLENGES_PER_WALLET = 5;
+const MAX_CHALLENGES_TOTAL = 50_000;
+// Per-IP nonce rate limit (fixed 1-minute window).
+const NONCE_PER_IP_PER_MIN = 20;
+const nonceHits = new Map<string, { windowStart: number; count: number }>();
+
+function rateLimited(ip: string): boolean {
+  const t = nowSec();
+  const h = nonceHits.get(ip);
+  if (!h || t - h.windowStart >= 60) {
+    nonceHits.set(ip, { windowStart: t, count: 1 });
+    return false;
+  }
+  h.count += 1;
+  return h.count > NONCE_PER_IP_PER_MIN;
+}
+
+function addChallenge(nonce: string, wallet: string, message: string, exp: number): void {
+  // Keep only the newest few per wallet (Map preserves insertion order).
+  const mine = [...challenges].filter(([, c]) => c.wallet === wallet);
+  for (const [n] of mine.slice(0, Math.max(0, mine.length - (MAX_CHALLENGES_PER_WALLET - 1)))) {
+    challenges.delete(n);
+  }
+  challenges.set(nonce, { wallet, message, exp });
+}
+
+const NONCE_RE = /^Nonce: ([0-9a-f]{32})$/m;
 
 function challengeMessage(wallet: string, nonce: string, issuedAt: number): string {
   return [
@@ -114,9 +142,13 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     } catch {
       return reply.code(400).send({ error: { code: "BAD_FRAME", message: "invalid wallet", fatal: true } });
     }
+    if (rateLimited(req.ip) || challenges.size >= MAX_CHALLENGES_TOTAL) {
+      return reply.code(429).send({ error: { code: "RATE_LIMITED", message: "too many sign-in attempts; wait a minute", fatal: false } });
+    }
     const issuedAt = nowSec();
-    const message = challengeMessage(wallet, randomBytes(16).toString("hex"), issuedAt);
-    challenges.set(wallet, { message, exp: issuedAt + NONCE_TTL_SEC });
+    const nonce = randomBytes(16).toString("hex");
+    const message = challengeMessage(wallet, nonce, issuedAt);
+    addChallenge(nonce, wallet, message, issuedAt + NONCE_TTL_SEC);
     return reply.send({ message, expiresAt: issuedAt + NONCE_TTL_SEC });
   });
 
@@ -126,13 +158,14 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       return reply.code(400).send({ error: { code: "BAD_FRAME", message: "bad verify body", fatal: true } });
     }
     const { wallet, message, signature } = parsed.data;
-    const ch = challenges.get(wallet);
-    if (!ch || ch.exp < nowSec() || ch.message !== message) {
+    const nonce = NONCE_RE.exec(message)?.[1];
+    const ch = nonce ? challenges.get(nonce) : undefined;
+    if (!ch || ch.wallet !== wallet || ch.exp < nowSec() || ch.message !== message) {
       return reply.code(401).send({
         error: { code: "AUTH_REQUIRED", message: "sign-in challenge expired; please try again", fatal: true },
       });
     }
-    challenges.delete(wallet); // single use
+    challenges.delete(nonce!); // single use
     if (!verifyEd25519(wallet, message, Buffer.from(signature, "base64"))) {
       return reply.code(401).send({ error: { code: "AUTH_REQUIRED", message: "signature did not verify", fatal: true } });
     }
@@ -143,6 +176,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
   // Drop stale challenges so the map can't grow unbounded.
   setInterval(() => {
     const t = nowSec();
-    for (const [w, c] of challenges) if (c.exp < t) challenges.delete(w);
+    for (const [n, c] of challenges) if (c.exp < t) challenges.delete(n);
+    for (const [ip, h] of nonceHits) if (t - h.windowStart >= 60) nonceHits.delete(ip);
   }, 60_000).unref();
 }

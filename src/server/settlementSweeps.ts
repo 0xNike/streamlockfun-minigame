@@ -17,14 +17,16 @@ import type { DeltaEntry } from "@streamlock/operator-sdk";
 import { config } from "./config.js";
 import {
   listRentReclaimDue,
+  listStakeSweepCandidates,
   markRentClosed,
+  markStakesReleased,
   setFailed,
   setSessionState,
   type SessionRow,
 } from "./db.js";
 import { logger } from "./log.js";
 import { EVIDENCE_RETENTION_SEC, cancelSession, closeSessionForRent, finalizeAndApply } from "./settlement.js";
-import { readSession } from "./routerChain.js";
+import { readSession, readStakeViews } from "./routerChain.js";
 import { releaseStake } from "./stakeTx.js";
 
 const nowSec = () => Math.floor(Date.now() / 1000);
@@ -66,6 +68,14 @@ export async function voidRow(row: SessionRow): Promise<void> {
   try {
     if (row.pda) {
       const st = await readSession(row.pda);
+      if (st && (st.status === "Submitted" || st.status === "Finalized")) {
+        // Crashed between the submit tx and the state write: a result is on
+        // chain. Releasing would let the loser escape, so leave the stakes for
+        // an operator (the stake sweep skips this row too).
+        setFailed(row.id, "failed", `crash_recovery: result on chain (${st.status}); needs manual settlement`);
+        log.error({ prevState: row.state, chainStatus: st.status }, "reconciler.result_on_chain_manual");
+        return;
+      }
       if (st && st.status === "Open") {
         await cancelSession({ sessionId: row.id, pda: row.pda, broadcast: () => {} });
       }
@@ -169,4 +179,84 @@ const SWEEP_EVERY_MS = 6 * 60 * 60 * 1000;
 export function startRentSweep(): NodeJS.Timeout {
   setTimeout(() => void sweepRentReclaim(), 60_000);
   return setInterval(() => void sweepRentReclaim(), SWEEP_EVERY_MS);
+}
+
+// ───────── stake release sweep ─────────
+//
+// Live release paths are best effort (a failed RPC only logs). A reservation
+// left bound blocks that stream for new matches (STREAM_RESERVED) until the
+// holder self-releases after reserved_until (~dispute end + 48 h). This sweep
+// retries the operator release for terminal rows, but never frees a stake whose
+// result may still be applied (session Submitted/Finalized on a non-`done` row).
+
+const STAKE_SWEEP_LOOKBACK_SEC = 14 * 24 * 3600;
+let stakeSweeping = false;
+
+export async function sweepStakeReleases(): Promise<void> {
+  if (stakeSweeping) return;
+  stakeSweeping = true;
+  try {
+    const rows = listStakeSweepCandidates(nowSec() - STAKE_SWEEP_LOOKBACK_SEC);
+    for (const row of rows) {
+      try {
+        await sweepRow(row);
+      } catch (err) {
+        logger.warn(
+          { sessionId: row.id, err: err instanceof Error ? err.message : String(err) },
+          "stake_sweep.row_failed",
+        );
+      }
+    }
+  } finally {
+    stakeSweeping = false;
+  }
+}
+
+async function sweepRow(row: SessionRow): Promise<void> {
+  const pda = row.pda!;
+  const sides = [
+    { wallet: row.player_a_wallet, streamId: row.player_a_stream },
+    ...(row.player_b_wallet && row.player_b_stream
+      ? [{ wallet: row.player_b_wallet, streamId: row.player_b_stream }]
+      : []),
+  ];
+  const views = await readStakeViews(sides.map((s) => ({ streamId: s.streamId, holder: s.wallet, bps: 0 })));
+  const bound = sides.filter((_, i) => {
+    const sale = views[i]?.sale;
+    return !!sale && sale.reservedBps > 0 && sale.reservedSession === pda;
+  });
+  if (bound.length === 0) {
+    markStakesReleased(row.id);
+    return;
+  }
+
+  const st = await readSession(pda);
+  if (st === null) {
+    // Session closed: only the holder can release now (after reserved_until).
+    logger.warn({ sessionId: row.id, pda }, "stake_sweep.session_closed_holder_must_release");
+    markStakesReleased(row.id);
+    return;
+  }
+  if (row.state !== "done" && (st.status === "Submitted" || st.status === "Finalized")) {
+    // A result is on chain but this row never finished applying: releasing
+    // would let the loser escape. Leave it for an operator.
+    logger.error({ sessionId: row.id, pda, chainStatus: st.status, rowState: row.state }, "stake_sweep.result_pending_manual");
+    return;
+  }
+  if (st.status === "Open") {
+    // Play never settled (e.g. cancel failed): cancel first, then release.
+    await cancelSession({ sessionId: row.id, pda, broadcast: () => {} });
+  }
+  for (const s of bound) {
+    await releaseStake({ sessionPda: pda, holder: s.wallet, streamId: s.streamId });
+    logger.info({ sessionId: row.id, wallet: s.wallet }, "stake_sweep.released");
+  }
+  markStakesReleased(row.id);
+}
+
+const STAKE_SWEEP_EVERY_MS = 15 * 60 * 1000;
+
+export function startStakeSweep(): NodeJS.Timeout {
+  setTimeout(() => void sweepStakeReleases(), 90_000);
+  return setInterval(() => void sweepStakeReleases(), STAKE_SWEEP_EVERY_MS);
 }

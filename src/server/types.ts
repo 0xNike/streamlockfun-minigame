@@ -409,6 +409,7 @@ export const ERROR_CODES = [
   "SAME_HUMAN",
   // Wallet sign-in
   "AUTH_REQUIRED",
+  "RATE_LIMITED",
   // Stake co-signing / disputes
   "SIGN_REJECTED",
   "DISPUTE_NOT_ALLOWED",
