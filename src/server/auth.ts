@@ -37,30 +37,10 @@ const nowSec = () => Math.floor(Date.now() / 1000);
 const challenges = new Map<string, { wallet: string; message: string; exp: number }>();
 const MAX_CHALLENGES_PER_WALLET = 10;
 const MAX_CHALLENGES_TOTAL = 50_000;
-// Per-IP nonce rate limit (fixed 1-minute window).
-const NONCE_PER_IP_PER_MIN = 20;
-const nonceHits = new Map<string, { windowStart: number; count: number }>();
-
-/**
- * Client IP for rate limiting. Behind Fly, Fly-Client-IP is set by the edge and
- * can't be spoofed; X-Forwarded-For's left-most entry (req.ip with trustProxy)
- * is client-controlled.
- */
-function clientIp(req: { ip: string; headers: Record<string, string | string[] | undefined> }): string {
-  const fly = req.headers["fly-client-ip"];
-  return (Array.isArray(fly) ? fly[0] : fly) || req.ip;
-}
-
-function rateLimited(ip: string): boolean {
-  const t = nowSec();
-  const h = nonceHits.get(ip);
-  if (!h || t - h.windowStart >= 60) {
-    nonceHits.set(ip, { windowStart: t, count: 1 });
-    return false;
-  }
-  h.count += 1;
-  return h.count > NONCE_PER_IP_PER_MIN;
-}
+// No per-IP limit: in production the web calls /api via the Vercel rewrite, so
+// Fly sees Vercel's egress IPs and every player would share a few buckets.
+// Abuse is bounded by the per-wallet cap and the global cap (challenges expire
+// after NONCE_TTL_SEC); volumetric limits belong at the edge.
 
 function addChallenge(nonce: string, wallet: string, message: string, exp: number): void {
   // Keep only the newest few per wallet (Map preserves insertion order).
@@ -152,8 +132,8 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     } catch {
       return reply.code(400).send({ error: { code: "BAD_FRAME", message: "invalid wallet", fatal: true } });
     }
-    if (rateLimited(clientIp(req)) || challenges.size >= MAX_CHALLENGES_TOTAL) {
-      return reply.code(429).send({ error: { code: "RATE_LIMITED", message: "too many sign-in attempts; wait a minute", fatal: false } });
+    if (challenges.size >= MAX_CHALLENGES_TOTAL) {
+      return reply.code(429).send({ error: { code: "RATE_LIMITED", message: "sign-in is busy; try again in a minute", fatal: false } });
     }
     const issuedAt = nowSec();
     const nonce = randomBytes(16).toString("hex");
@@ -187,6 +167,5 @@ export function registerAuthRoutes(app: FastifyInstance): void {
   setInterval(() => {
     const t = nowSec();
     for (const [n, c] of challenges) if (c.exp < t) challenges.delete(n);
-    for (const [ip, h] of nonceHits) if (t - h.windowStart >= 60) nonceHits.delete(ip);
   }, 60_000).unref();
 }
