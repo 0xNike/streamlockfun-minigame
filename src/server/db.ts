@@ -91,6 +91,18 @@ db.exec(`
     verified_at  INTEGER NOT NULL,
     last_seen_at INTEGER NOT NULL
   );
+
+  -- One row per HolderSale PDA whose rent the operator funded (reserve_stake
+  -- confirmed with the operator as payer on a new account). Drives the daily
+  -- and per-wallet rent caps.
+  CREATE TABLE IF NOT EXISTS rent_fundings (
+    wallet     TEXT NOT NULL,
+    stream_id  TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    funded_at  INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_rent_fundings_wallet ON rent_fundings(wallet);
+  CREATE INDEX IF NOT EXISTS idx_rent_fundings_ts ON rent_fundings(funded_at);
 `);
 
 // Migrations for previously-deployed schemas (v0 is forgiving — additive only).
@@ -107,6 +119,15 @@ for (const [col, type] of [
   ["locked_b_at_match_time", "TEXT"],
   ["bps_if_a_loses", "INTEGER"],
   ["bps_if_b_loses", "INTEGER"],
+  // Unix ts when session + delta-chunk PDAs were closed for rent. Closing is
+  // only allowed 7 days after the dispute window ends (router EvidenceRetention).
+  ["rent_closed_at", "INTEGER"],
+  // Unix ts when the stake sweep confirmed no reservation is still bound to
+  // this session (released, applied, or never landed).
+  ["stakes_released_at", "INTEGER"],
+  // Unix ts the stake sweep last skipped this row because a result is on chain
+  // but the row never applied (needs an operator). Re-checked daily, sorted last.
+  ["stakes_manual_at", "INTEGER"],
 ] as const) {
   if (!sessionColNames.has(col)) {
     db.exec(`ALTER TABLE sessions ADD COLUMN ${col} ${type}`);
@@ -318,6 +339,116 @@ const nonTerminalStmt = db.prepare<[], SessionRow>(`
 
 export function listNonTerminalSessions(): SessionRow[] {
   return nonTerminalStmt.all();
+}
+
+// A stream is "busy" while a match that stakes it has (or is about to have) an
+// on-chain session: from B-join ("creating") until done/cancelled/failed.
+// Unfilled offers ("partnered") don't lock the stream; whichever offer is
+// joined first does. Why: since the 2026-11 router fix, two pending matches on
+// one stream race at apply time and the second can fail with DeltaUnderflow
+// after it was already played.
+const streamBusyStmt = db.prepare<[string, string, string], { id: string; state: string }>(`
+  SELECT id, state FROM sessions
+  WHERE state NOT IN ('done', 'cancelled', 'failed', 'partnered')
+    AND (player_a_stream = ? OR player_b_stream = ?)
+    AND id != ?
+  LIMIT 1
+`);
+
+export function findBusyStreamSession(
+  streamId: string,
+  excludeSessionId = "",
+): { id: string; state: string } | undefined {
+  return streamBusyStmt.get(streamId, streamId, excludeSessionId);
+}
+
+const rentDueStmt = db.prepare<[number], SessionRow>(`
+  SELECT * FROM sessions
+  WHERE state = 'done'
+    AND pda IS NOT NULL
+    AND rent_closed_at IS NULL
+    AND end_ts IS NOT NULL
+    AND end_ts + dispute_window_sec < ?
+  ORDER BY updated_at ASC
+  LIMIT 20
+`);
+
+/** `done` sessions whose evidence retention ended before `retentionCutoff`. */
+export function listRentReclaimDue(retentionCutoff: number): SessionRow[] {
+  return rentDueStmt.all(retentionCutoff);
+}
+
+const markRentClosedStmt = db.prepare(`UPDATE sessions SET rent_closed_at = ? WHERE id = ?`);
+
+export function markRentClosed(id: string): void {
+  markRentClosedStmt.run(Math.floor(Date.now() / 1000), id);
+}
+
+const stakeSweepStmt = db.prepare<[number, number], SessionRow>(`
+  SELECT * FROM sessions
+  WHERE state IN ('done', 'cancelled', 'failed')
+    AND pda IS NOT NULL
+    AND stakes_released_at IS NULL
+    AND updated_at > ?
+    AND (stakes_manual_at IS NULL OR stakes_manual_at < ?)
+  ORDER BY stakes_manual_at IS NOT NULL, updated_at ASC
+  LIMIT 50
+`);
+
+/**
+ * Terminal rows with an on-chain session whose reservations aren't known to be
+ * cleared. Rows flagged for manual handling come last and only once per day.
+ */
+export function listStakeSweepCandidates(updatedAfter: number, manualRecheckBefore: number): SessionRow[] {
+  return stakeSweepStmt.all(updatedAfter, manualRecheckBefore);
+}
+
+const markStakesManualStmt = db.prepare(`UPDATE sessions SET stakes_manual_at = ? WHERE id = ?`);
+
+export function markStakesManual(id: string): void {
+  markStakesManualStmt.run(Math.floor(Date.now() / 1000), id);
+}
+
+const markStakesReleasedStmt = db.prepare(`UPDATE sessions SET stakes_released_at = ? WHERE id = ?`);
+
+export function markStakesReleased(id: string): void {
+  markStakesReleasedStmt.run(Math.floor(Date.now() / 1000), id);
+}
+
+const disputeWatchStmt = db.prepare<[], SessionRow>(`
+  SELECT * FROM sessions
+  WHERE state IN ('dispute_wait', 'under_review')
+    AND pda IS NOT NULL
+  ORDER BY updated_at ASC
+  LIMIT 200
+`);
+
+/** Rows in their dispute window or awaiting the arbiter. */
+export function listDisputeWatchRows(): SessionRow[] {
+  return disputeWatchStmt.all();
+}
+
+const rentSinceStmt = db.prepare<[number], { n: number }>(`SELECT COUNT(*) AS n FROM rent_fundings WHERE funded_at > ?`);
+const rentWalletStmt = db.prepare<[string], { n: number }>(`SELECT COUNT(*) AS n FROM rent_fundings WHERE wallet = ?`);
+const rentInsertStmt = db.prepare(
+  `INSERT INTO rent_fundings (wallet, stream_id, session_id, funded_at) VALUES (?, ?, ?, ?)`,
+);
+
+/** Operator-funded HolderSales since `since` (all wallets) and ever for `wallet`. */
+export function rentFundingCounts(wallet: string, since: number): { recent: number; wallet: number } {
+  return { recent: rentSinceStmt.get(since)!.n, wallet: rentWalletStmt.get(wallet)!.n };
+}
+
+export function recordRentFunding(wallet: string, streamId: string, sessionId: string): void {
+  rentInsertStmt.run(wallet, streamId, sessionId, Math.floor(Date.now() / 1000));
+}
+
+const setDisputeWindowStmt = db.prepare(
+  `UPDATE sessions SET dispute_window_sec = ?, updated_at = ? WHERE id = ?`,
+);
+
+export function setDisputeWindow(id: string, disputeWindowSec: number): void {
+  setDisputeWindowStmt.run(disputeWindowSec, Math.floor(Date.now() / 1000), id);
 }
 
 const stuckSessionsStmt = db.prepare<[number], SessionRow>(`

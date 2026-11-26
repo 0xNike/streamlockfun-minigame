@@ -5,6 +5,24 @@
  */
 
 import type { ClientFrame, ServerFrame } from "./types";
+import { currentToken } from "./authStore";
+
+// The SPA has at most one live match socket. Shared components (stake signing,
+// dispute button) listen and send through it without prop-drilling.
+type FrameListener = (frame: ServerFrame) => void;
+const listeners = new Set<FrameListener>();
+let active: WsClient | null = null;
+
+/** Subscribe to every frame on the active match socket. Returns unsubscribe. */
+export function onAnyFrame(fn: FrameListener): () => void {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+/** Send on the active match socket (no-op when none is open). */
+export function sendActive(frame: ClientFrame): void {
+  active?.send(frame);
+}
 
 export type WsHandler = (frame: ServerFrame) => void;
 
@@ -18,9 +36,12 @@ const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 5_000;
 
 export function openWs(absoluteOrPath: string, onFrame: WsHandler, onStatus?: (s: "open" | "close" | "error", info?: unknown) => void): WsClient {
-  const wsUrl = absoluteOrPath.startsWith("ws")
+  const base = absoluteOrPath.startsWith("ws")
     ? absoluteOrPath
     : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${absoluteOrPath}`;
+  // The server binds the socket to the signed-in wallet (?token=).
+  const token = currentToken();
+  const wsUrl = token ? `${base}${base.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}` : base;
 
   let ws: WebSocket | null = null;
   let manualClose = false;
@@ -44,6 +65,7 @@ export function openWs(absoluteOrPath: string, onFrame: WsHandler, onStatus?: (s
         return;
       }
       onFrame(frame);
+      for (const fn of listeners) fn(frame);
     };
     ws.onerror = (e) => onStatus?.("error", e);
     ws.onclose = (e) => {
@@ -58,7 +80,7 @@ export function openWs(absoluteOrPath: string, onFrame: WsHandler, onStatus?: (s
 
   connect();
 
-  return {
+  const client: WsClient = {
     url: wsUrl,
     send(frame) {
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -66,7 +88,10 @@ export function openWs(absoluteOrPath: string, onFrame: WsHandler, onStatus?: (s
     },
     close() {
       manualClose = true;
+      if (active === client) active = null;
       ws?.close(1000, "client done");
     },
   };
+  active = client;
+  return client;
 }

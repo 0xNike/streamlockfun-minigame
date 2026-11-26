@@ -18,12 +18,16 @@ import type { DeltaEntry } from "@streamlock/operator-sdk";
 import { op, GAME_TOKEN_MINT, OPERATOR_PUBKEY } from "./operator.js";
 import { playBestOfThree } from "./game.js";
 import { findPairing, type Player } from "./matchmaker.js";
+import { effectiveDisputeWindowSec } from "./server/routerChain.js";
 
 const STAKE_BPS = 1000;            // 10% of a stream's ledger per loss
-const DISPUTE_WINDOW_SEC = 120;    // 60s for casual games; longer for high-stakes (devnet clock skew → 120s)
+// The router enforces max(config.dispute_window_seconds, 3600); read it from
+// chain rather than hardcoding (mainnet config is 86400 = 24 h as of 2026-11).
+let DISPUTE_WINDOW_SEC = 3600;
 
 async function startSession(p1: Player, p2: Player) {
-  console.log("[match] creating session…");
+  DISPUTE_WINDOW_SEC = await effectiveDisputeWindowSec(DISPUTE_WINDOW_SEC);
+  console.log(`[match] creating session (dispute window ${DISPUTE_WINDOW_SEC}s)…`);
   const session = await op.sessions.create({
     tokenMint: GAME_TOKEN_MINT,
     participants: [

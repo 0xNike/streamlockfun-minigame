@@ -27,7 +27,7 @@ Live at [games.streamlock.fun](https://games.streamlock.fun) — the hub at `/` 
    - **Resign / timeout** — either player can concede the whole match anytime via the **Resign** button (opponent wins, settlement runs normally). Missing a move deadline forfeits the same way.
    
    In RPS, a missing/late commit forfeits that round, and a reveal whose hash doesn't match the earlier commit is treated as a forfeit (logged as a cheat attempt — the commit hash is in the DB). A quick green/red flash signals each round's result.
-4. **Settle.** Once there's a winner, the operator picks the bps-shift for the actual outcome (the wager snapshot stores per-outcome bps so settlement never re-derives from drifted live data), and runs the on-chain sequence: `submit deltas → wait dispute window → finalize → apply`. The dispute window defaults to 30s on Fly (`fly.toml`). Players see each transaction with a live "pending → confirmed" tag and a Solscan link.
+4. **Settle.** Once there's a winner, the operator picks the bps-shift for the actual outcome (the wager snapshot stores per-outcome bps so settlement never re-derives from drifted live data), and runs the on-chain sequence: `submit deltas → wait dispute window → finalize → apply`. The dispute window is `max(DISPUTE_WINDOW_SEC, router config, 3600 s)`. The router's config is read from chain, and is 24 h on mainnet as of 2026-11. Players see each transaction with a live "pending → confirmed" tag and a Solscan link.
 
 **Anti-grief and anti-cheat properties this gets you for free:**
 
@@ -35,7 +35,7 @@ Live at [games.streamlock.fun](https://games.streamlock.fun) — the hub at `/` 
 - *No double-spend.* Stakes are bounded by `min(lockedA, lockedB)` and locked into a session PDA at match start; the only outcomes are "loser's bps → winner" or "cancel and walk away" (on ties or operator-side failures).
 - *Sybil resistance.* `verifiedOnly` matches reject the same World ID nullifier on both sides, so one human can't farm both seats.
 - *Crash recovery.* The operator state machine is in-process, but every transition writes a SQLite row. On restart, the reconciler marks abandoned mid-flight matches `failed` so neither party is left holding an active PDA forever.
-- *Dispute window.* Every settlement has a (configurable, default 30s mainnet) window where deltas are *submitted* but not yet *applied* — gives an out-of-band dispute path if the chain ever needs one. The operator only calls `apply` after the window elapses.
+- *Dispute window.* Every settlement has a window (at least 1 h, enforced on-chain; 24 h on mainnet) where deltas are *submitted* but not yet *applied* — gives an out-of-band dispute path if the chain ever needs one. The operator only calls `apply` after the window elapses.
 
 ## Architecture
 
@@ -90,7 +90,7 @@ SOLANA_KEYPAIR_B64=$(cat ./operator.json | python3 -c 'import json,sys,base64; p
 echo "OPERATOR_SECRET_KEY_B64=$SOLANA_KEYPAIR_B64"
 ```
 
-Fund it with ~0.5 SOL working balance. Per-match rent is ~0.05 SOL across two PDAs (session + results); rent is reclaimed when `finalizeAndApply` or `cancel` closes them, so steady-state cost is dominated by transaction fees. Lamports are *float* during a match's dispute window — size the balance for your peak concurrent matches, not your lifetime volume.
+Fund it with ~0.5 SOL working balance. Per-match rent is ~0.05 SOL across two PDAs (session + results); rent is reclaimed by a periodic sweep once the router's 7-day evidence retention has passed (`close_session` / `close_delta_chunk` fail before that), so steady-state cost is dominated by transaction fees. Lamports are *float* during a match's dispute window — size the balance for your peak concurrent matches, not your lifetime volume.
 
 > Keep `operator.json` outside this repo's tree, or `.gitignore` it explicitly. **Never commit a keypair.**
 

@@ -156,7 +156,8 @@ WS disconnect → grace timer (`RECONNECT_GRACE_SEC`, default 30s). If they reco
 ### Operator (Fly machine) redeploys during a match
 
 - Pre-settlement (`partnered`/`creating`/`active`/`complete`) — reconciler marks the row `failed` at next boot. The session PDA on chain is orphaned but inert (no deltas ever submitted). Cleanup script can `cancelSession` to recover rent.
-- Settlement-stage (`submitting`/`dispute_wait`/`finalizing`/`applying`) — left in DB for a Phase-3 chain reconciliation pass that doesn't yet exist; manual recovery via `scripts/cleanup.ts` for now.
+- `dispute_wait`/`finalizing`/`applying` — the submit is on-chain and the deltas are persisted, so the reconciler re-schedules finalize + apply at the stored dispute end (`src/server/settlementSweeps.ts`). Every step is safe to re-run.
+- `submitting`/`cancelling` — unknown whether the tx landed; left in DB and logged. Manual recovery via `src/recover.ts`.
 
 ### Tie game (best-of-three or match-level)
 
@@ -195,7 +196,7 @@ All defaults are in `src/server/config.ts`. Production values are pinned in `fly
 | `RECONNECT_GRACE_SEC` | 30 | WS-disconnect grace before forfeit/abandon. |
 | `STAKE_BPS` | 1000 (10%) | Default percentage stake when creator doesn't supply an absolute amount. |
 | `COHORT_MAX_RATIO` | 5 | Reject pairings where larger / smaller stream exceeds this ratio. |
-| `DISPUTE_WINDOW_SEC` | 120 | On-chain anti-cheat window. Lower = faster settlement; chain enforces a minimum. Production value: 30. |
+| `DISPUTE_WINDOW_SEC` | 3600 | *Requested* on-chain anti-cheat window. The router enforces `max(config.dispute_window_seconds, 3600)`; the server reads that config from the `StreamlockConfig` PDA and uses the larger value. Mainnet config is 86400 (24 h) as of 2026-11, so settlement takes a day. |
 | `FINALIZE_BUFFER_SEC` | 30 | Local clock-skew buffer between dispute-window-elapsed and the `finalize` call. Production value: 10. |
 | `ENDTS_BUFFER_SEC` | 30 | `endTs` set at session-create as `now + this`. Padding so retries after slow confirmation don't reuse a stale, now-past timestamp. |
 
@@ -207,7 +208,7 @@ Changing any of the above requires `fly deploy` (env vars in `fly.toml [env]` on
 
 - **No move is ever defaulted to "paper"** (or any other value). A missing move is `null`, treated as a forfeit.
 - **No tokens move.** Settlement only changes the entitlement split inside the loser's stream. Confused players sometimes ask "where did my X tokens go?" — the answer is they're still in the same stream, just with a different holder share.
-- **The on-chain dispute window cannot be skipped.** Even if both players agree "we're done, payout now", the chain rejects `finalize` before `disputeEndTs`. Lower `DISPUTE_WINDOW_SEC` if you want faster settlement, but you can't bypass it per-match.
+- **The on-chain dispute window cannot be skipped.** Even if both players agree "we're done, payout now", the chain rejects `finalize` before `disputeEndTs`. The floor is `max(config.dispute_window_seconds, 3600)` and is set on-chain by the router authority; `DISPUTE_WINDOW_SEC` can only raise it.
 - **Wager amount is frozen at B-join.** Any drift in `lockedTokenAmount` between agreement and settlement is irrelevant — the snapshot is the contract.
 
 ---

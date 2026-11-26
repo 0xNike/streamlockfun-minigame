@@ -9,6 +9,7 @@ import { config } from "./config.js";
 import { logger } from "./log.js";
 import { registerMatchRoutes } from "./routes.matches.js";
 import { registerWorldIdRoutes } from "./routes.worldid.js";
+import { registerAuthRoutes } from "./auth.js";
 
 export async function buildHttp(): Promise<FastifyInstance> {
   const app: FastifyInstance = Fastify({
@@ -40,6 +41,7 @@ export async function buildHttp(): Promise<FastifyInstance> {
     ts: Math.floor(Date.now() / 1000),
   }));
 
+  registerAuthRoutes(app);
   registerMatchRoutes(app);
   registerWorldIdRoutes(app);
 

@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import type { MatchSnapshot, MatchState, Side, TxKind } from "../types";
 import { formatToken, stakeBaseUnits } from "../format";
+import { sendActive } from "../ws";
+
+// Dispute button is hidden at launch (owner decision 2026-11-25). The server
+// still handles request_dispute and on-chain disputes; set
+// VITE_DISPUTES_ENABLED=true to show it.
+const DISPUTES_ENABLED = import.meta.env.VITE_DISPUTES_ENABLED === "true";
 
 interface TxEvent {
   kind: TxKind;
@@ -17,8 +23,10 @@ function explorer(sig: string, cluster: string) {
 
 function fmtClock(sec: number): string {
   if (sec <= 0) return "0s";
-  const m = Math.floor(sec / 60);
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
   const s = Math.floor(sec % 60);
+  if (h > 0) return `${h}h ${m.toString().padStart(2, "0")}m`;
   return m > 0 ? `${m}m ${s.toString().padStart(2, "0")}s` : `${s}s`;
 }
 
@@ -40,6 +48,7 @@ function activeStepIndex(state: MatchState): number {
     case "submitting":
       return 1;
     case "dispute_wait":
+    case "under_review":
       return 2;
     case "finalizing":
     case "applying":
@@ -84,7 +93,8 @@ export function SettlementProgress({
           {snap.state === "cancelling" ? "Cancelling…" : "Cancelled"}
         </div>
         <div className="dim small">
-          No funds will move. Any setup costs are refunded automatically.
+          No funds will move, and your stake lock is released. Any setup costs
+          are refunded automatically.
         </div>
         <SigDisclosure txEvents={txEvents} cluster={cluster} />
       </div>
@@ -107,6 +117,7 @@ export function SettlementProgress({
   if (idx < 0) return null;
 
   const inHold = snap.state === "dispute_wait";
+  const inReview = snap.state === "under_review";
   const windowSec = Math.max(1, snap.disputeWindowSec);
   const eligibleAt = snap.finalizeEligibleAt ?? stepStartedAt + windowSec;
   const remaining = Math.max(0, eligibleAt - now);
@@ -139,20 +150,34 @@ export function SettlementProgress({
         <div className="settle__bar-fill" style={{ width: `${progressPct}%` }} />
       </div>
 
-      {inHold ? (
+      {inReview ? (
+        <div className="hold">
+          <div className="hold__label">Under review</div>
+          <div className="hold__sub">
+            A player disputed this result. An independent arbiter will review
+            it after the safety window ends. If the dispute is upheld, the match
+            is cancelled and both stakes are released; if it's rejected, the
+            result stands and the winner is credited. You can close this page.
+          </div>
+        </div>
+      ) : inHold ? (
         <div className="hold">
           <div className="hold__label">Anti-cheat hold</div>
           <div className="hold__time">{fmtClock(remaining)}</div>
           <div className="hold__sub">
-            Brief safety window so the result can be verified before payout
-            settles. Payout starts automatically when this hits 0.
+            On-chain safety window: the result can be disputed until this
+            hits 0. After that, the winner's share is credited automatically.
+            You can close this page; it finishes without you.
           </div>
           <div className="hold__bar">
             <div className="hold__bar-fill" style={{ width: `${windowFillPct}%` }} />
           </div>
           <div className="hold__safe">
-            ✓ You can close this tab — your payout will land automatically.
+            ✓ You can close this tab. Winnings arrive as a share of the loser's
+            position, which the winner can sell from the Streamlock app in any
+            unlock window.
           </div>
+          {you && DISPUTES_ENABLED && <DisputeButton />}
         </div>
       ) : (
         <div className="settle__elapsed dim small">
@@ -192,6 +217,43 @@ export function SettlementProgress({
 
       <SigDisclosure txEvents={txEvents} cluster={cluster} />
     </div>
+  );
+}
+
+/**
+ * Staked players only (the parent renders this when `you` is set). Opening a
+ * dispute sends the player an on-chain tx to sign; the router only accepts it
+ * from a wallet whose stake is reserved for this match.
+ */
+function DisputeButton() {
+  const [state, setState] = useState<"idle" | "confirm" | "sent">("idle");
+  if (state === "sent") {
+    return <div className="dim small">Dispute requested. Check your wallet to sign it.</div>;
+  }
+  if (state === "confirm") {
+    return (
+      <div className="dim small">
+        Dispute this result? An arbiter reviews it; if upheld, the match is
+        voided. You pay a small refundable record fee.{" "}
+        <button
+          className="btn btn--ghost"
+          onClick={() => {
+            sendActive({ type: "request_dispute", reasonCode: 1 });
+            setState("sent");
+          }}
+        >
+          Yes, dispute
+        </button>{" "}
+        <button className="btn btn--ghost" onClick={() => setState("idle")}>
+          Cancel
+        </button>
+      </div>
+    );
+  }
+  return (
+    <button className="btn btn--ghost small" onClick={() => setState("confirm")}>
+      Something wrong? Dispute this result
+    </button>
   );
 }
 
@@ -274,6 +336,9 @@ function latestConfirmedSig(txEvents: TxEvent[], kind: TxKind): string | null {
 
 const TX_STEP_LABELS: Record<TxKind, string> = {
   create: "Match session created",
+  reserve: "Stake locked",
+  release: "Stake lock released",
+  dispute: "Dispute opened",
   submit: "Result recorded on-chain",
   finalize: "Result finalized",
   apply: "Payout applied",

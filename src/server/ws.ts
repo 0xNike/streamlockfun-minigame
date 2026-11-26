@@ -9,6 +9,7 @@
 import fastifyWebsocket from "@fastify/websocket";
 import type { FastifyInstance } from "fastify";
 import { getLive } from "./matches.js";
+import { walletFromToken } from "./auth.js";
 import type { ServerFrame, Side } from "./types.js";
 
 const HEARTBEAT_MS = 15_000;
@@ -16,7 +17,7 @@ const HEARTBEAT_MS = 15_000;
 export async function registerWs(app: FastifyInstance): Promise<void> {
   await app.register(fastifyWebsocket);
 
-  app.get<{ Params: { id: string }; Querystring: { as?: string } }>(
+  app.get<{ Params: { id: string }; Querystring: { as?: string; token?: string } }>(
     "/ws/match/:id",
     { websocket: true },
     (socket, req) => {
@@ -51,6 +52,24 @@ export async function registerWs(app: FastifyInstance): Promise<void> {
           } satisfies ServerFrame),
         );
         socket.close(1008, "match not found");
+        return;
+      }
+
+      // Bind the socket to the signed-in wallet: only the wallet that holds
+      // this side may act for it (moves, resign, stake co-signing).
+      const slotWallet = side === "a" ? match.playerA.wallet : match.playerB?.wallet;
+      const tokenWallet = walletFromToken(req.query.token);
+      if (!tokenWallet || tokenWallet !== slotWallet) {
+        socket.send(
+          JSON.stringify({
+            type: "error",
+            ts: Math.floor(Date.now() / 1000),
+            code: "AUTH_REQUIRED",
+            message: tokenWallet ? "signed in with a different wallet than this side" : "sign in with your wallet first",
+            fatal: true,
+          } satisfies ServerFrame),
+        );
+        socket.close(1008, "auth");
         return;
       }
 

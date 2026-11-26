@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useWalletAuth } from "../useWalletAuth";
 import { useNavigate } from "react-router-dom";
 import { useWalletAddress } from "../useWalletAddress";
 import { api } from "../api";
@@ -15,6 +16,7 @@ export function MatchEndCTA({
 }) {
   const navigate = useNavigate();
   const { address: wallet } = useWalletAddress();
+  const { ensureSignedIn } = useWalletAuth();
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -30,6 +32,7 @@ export function MatchEndCTA({
     setBusy(true);
     setErr(null);
     try {
+      await ensureSignedIn();
       const { matchId: newId } = await api.createMatch({ wallet, streamId: yourStream });
       navigate(`/match/${newId}`);
     } catch (e) {

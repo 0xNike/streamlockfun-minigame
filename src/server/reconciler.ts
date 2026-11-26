@@ -1,25 +1,34 @@
 /**
  * Crash recovery: walk all non-terminal sessions on startup.
  *
- * Phase 1 policy:
- *   - Pre-settlement states (partnered, creating, active, complete): mark failed.
+ * Policy:
+ *   - creating/reserving/active/complete WITH a session PDA: cancel the session
+ *     and release both players' stake reservations (settlementSweeps.voidRow).
+ *     Leaving it would lock their stakes until reserved_until (~3 days).
+ *   - Other pre-settlement states (partnered, no PDA): mark failed.
  *     The mini-game has no way to resume mid-play state from disk in v0; the
  *     streams are still free to be re-engaged in a fresh match. No on-chain
  *     footprint to clean up for `partnered`; for `creating`/`active`/`complete`
  *     a session may exist on-chain but we don't try to cancel it — Phase 3
  *     will read the chain and decide.
- *   - Settlement-stage states (submitting, dispute_wait, finalizing, applying,
- *     cancelling): logged for Phase 3 to handle. Do NOT mark failed because
- *     the chain may still need a forward-step.
+ *   - dispute_wait / finalizing / applying: the submit is on-chain and the
+ *     deltas are persisted, so finalize + apply are re-scheduled at the stored
+ *     dispute_end (settlementSweeps.resumeSettlement). With a 24 h mainnet
+ *     window, a restart mid-window is the normal case, not an edge case.
+ *   - submitting / cancelling: unknown whether the tx landed. Logged for
+ *     manual handling (src/recover.ts). Do NOT mark failed because the chain
+ *     may still need a forward-step.
  */
 
 import { listNonTerminalSessions, setFailed, type SessionRow } from "./db.js";
 import { logger } from "./log.js";
+import { RESUMABLE_STATES, VOIDABLE_STATES, resumeSettlement, voidRow } from "./settlementSweeps.js";
 import type { MatchState } from "./types.js";
 
 const PRE_SETTLEMENT: ReadonlySet<MatchState> = new Set([
   "partnered",
   "creating",
+  "reserving",
   "active",
   "complete",
 ]);
@@ -27,6 +36,7 @@ const PRE_SETTLEMENT: ReadonlySet<MatchState> = new Set([
 const SETTLEMENT_STAGE: ReadonlySet<MatchState> = new Set([
   "submitting",
   "dispute_wait",
+  "under_review",
   "finalizing",
   "applying",
   "cancelling",
@@ -40,14 +50,21 @@ export function runOnStartup(): void {
   }
   let preCount = 0;
   let settlementCount = 0;
+  let resumedCount = 0;
   for (const row of rows) {
-    if (PRE_SETTLEMENT.has(row.state)) {
+    if (VOIDABLE_STATES.has(row.state) && row.pda) {
+      // Session exists on-chain: cancel it and free the stakes, async.
+      void voidRow(row);
+      preCount += 1;
+    } else if (PRE_SETTLEMENT.has(row.state)) {
       setFailed(row.id, "failed", "crash_recovery: pre-settlement abandon");
       preCount += 1;
       logger.warn(
         { sessionId: row.id, prevState: row.state, pda: row.pda },
         "reconciler.failed_pre_settlement",
       );
+    } else if (RESUMABLE_STATES.has(row.state) && resumeSettlement(row)) {
+      resumedCount += 1;
     } else if (SETTLEMENT_STAGE.has(row.state)) {
       settlementCount += 1;
       logger.warn(
@@ -67,7 +84,7 @@ export function runOnStartup(): void {
     }
   }
   logger.info(
-    { total: rows.length, marked_failed: preCount, awaiting_phase3: settlementCount },
+    { total: rows.length, marked_failed: preCount, resumed: resumedCount, needs_manual: settlementCount },
     "reconciler.done",
   );
 }
